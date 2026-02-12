@@ -492,6 +492,19 @@ async function resolveDataByScope(tab, siteInfo, scope, progressTextEl, progress
     if (result.failed.length > 0) {
       infoText = `${result.chats.length}/${result.total} sohbet islendi.`;
     }
+  } else if (scope === 'selected') {
+    const selectedIndices = getSelectedBatchIndices();
+    if (!selectedIndices.length) throw new Error('Hicbir sohbet secilmedi.');
+    const result = await collectSelectedChats(tab, siteInfo, selectedIndices, progressTextEl, progressBaseLabel);
+    if (!result.chats.length) {
+      const detail = result.failed[0]?.reason ? ` Ilk hata: ${result.failed[0].reason}` : '';
+      throw new Error(`Hicbir sohbet islenemedi.${detail}`);
+    }
+    data = mergeChatsForExport(result.chats, siteInfo.name);
+    previewChats = result.chats;
+    if (result.failed.length > 0) {
+      infoText = `${result.chats.length}/${result.total} sohbet islendi.`;
+    }
   } else {
     if (progressTextEl && progressLabel) {
       progressTextEl.textContent = progressLabel;
@@ -546,6 +559,245 @@ function getCurrentExportOptions() {
     syntaxHighlight: syntaxEl ? syntaxEl.checked : currentSettings.defaultSyntaxHighlight !== false,
     exportedAt: new Date().toISOString(),
   };
+}
+
+/* ================================================================
+   BATCH SELECT
+   ================================================================ */
+
+let batchConversationItems = [];
+
+async function loadBatchList(tabId, siteId) {
+  const batchPanel = document.getElementById('batchPanel');
+  const batchList = document.getElementById('batchList');
+  const batchCount = document.getElementById('batchCount');
+  if (!batchPanel || !batchList) return;
+
+  batchList.innerHTML = '<p class="batch-loading">Sohbet listesi yukleniyor...</p>';
+
+  try {
+    await ensureContentScript(tabId);
+    const response = await chrome.tabs.sendMessage(tabId, {
+      action: 'GET_CONVERSATION_LIST',
+      siteId,
+    });
+    batchConversationItems = response?.items || [];
+  } catch (_) {
+    batchConversationItems = [];
+  }
+
+  if (!batchConversationItems.length) {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      let links = await getChatLinks(tabId, siteId);
+      if (tab?.url) links = uniqueUrls([tab.url, ...links]);
+      links = links.filter((u) => isLikelyChatUrl(siteId, u));
+
+      batchConversationItems = links.map((href, idx) => {
+        let title = `Sohbet ${idx + 1}`;
+        try {
+          const u = new URL(href);
+          const seg = decodeURIComponent((u.pathname.split('/').pop() || '').trim());
+          if (seg && seg.length > 3) title = seg.replace(/[-_]+/g, ' ').slice(0, 80);
+        } catch (_) {}
+        return { title, href };
+      });
+    } catch (_) {
+      batchConversationItems = [];
+    }
+  }
+
+  if (!batchConversationItems.length) {
+    batchList.innerHTML = '<p class="batch-loading">Sohbet bulunamadi.</p>';
+    if (batchCount) batchCount.textContent = '0 secili';
+    return;
+  }
+
+  batchList.innerHTML = '';
+  batchConversationItems.forEach((item, idx) => {
+    const row = document.createElement('label');
+    row.className = 'batch-item';
+    row.innerHTML = `<input type="checkbox" data-batch-idx="${idx}" checked>
+      <span class="batch-item-title">${escapeHtml(item.title || `Sohbet ${idx + 1}`)}</span>`;
+    batchList.appendChild(row);
+  });
+
+  updateBatchCount();
+}
+
+function getSelectedBatchIndices() {
+  const checks = document.querySelectorAll('#batchList input[type="checkbox"]');
+  const indices = [];
+  checks.forEach((cb) => {
+    if (cb.checked) indices.push(parseInt(cb.dataset.batchIdx, 10));
+  });
+  return indices;
+}
+
+function updateBatchCount() {
+  const batchCount = document.getElementById('batchCount');
+  if (!batchCount) return;
+  const selected = getSelectedBatchIndices().length;
+  const total = batchConversationItems.length;
+  batchCount.textContent = `${selected}/${total} secili`;
+}
+
+function setupBatchPanel() {
+  const batchList = document.getElementById('batchList');
+  const selectAllBtn = document.getElementById('batchSelectAllBtn');
+
+  if (batchList) {
+    batchList.addEventListener('change', updateBatchCount);
+  }
+
+  if (selectAllBtn) {
+    selectAllBtn.onclick = () => {
+      const checks = document.querySelectorAll('#batchList input[type="checkbox"]');
+      const allChecked = Array.from(checks).every((cb) => cb.checked);
+      checks.forEach((cb) => (cb.checked = !allChecked));
+      selectAllBtn.textContent = allChecked ? 'Hepsini Sec' : 'Hepsini Kaldir';
+      updateBatchCount();
+    };
+  }
+}
+
+async function collectSelectedChats(tab, siteInfo, selectedIndices, progressEl, baseLabel) {
+  const chats = [];
+  const failed = [];
+
+  await ensureContentScript(tab.id);
+
+  for (let i = 0; i < selectedIndices.length; i++) {
+    const idx = selectedIndices[i];
+    const item = batchConversationItems[idx];
+    if (!item) continue;
+
+    try {
+      if (progressEl) {
+        progressEl.textContent = `${baseLabel || 'Dosya'} hazirlaniyor... (${i + 1}/${selectedIndices.length})`;
+      }
+
+      if (item.href) {
+        await chrome.tabs.update(tab.id, { url: item.href });
+        await waitForTabComplete(tab.id);
+        await new Promise((r) => setTimeout(r, 900));
+        const data = await extractCurrentChat(tab.id, siteInfo.id);
+        chats.push({ ...data, sourceUrl: item.href });
+      } else {
+        await ensureContentScript(tab.id);
+        const prevFp = chats.length > 0
+          ? (chats[chats.length - 1].messages || []).map((m) => (m.html || '').slice(0, 80)).join('|')
+          : '';
+        const response = await chrome.tabs.sendMessage(tab.id, {
+          action: 'EXTRACT_CHAT_AT_INDEX',
+          siteId: siteInfo.id,
+          index: idx,
+          title: item.title || '',
+          prevFingerprint: prevFp,
+        });
+        if (response?.data?.messages?.length) {
+          chats.push({ ...response.data, sourceUrl: '' });
+        }
+      }
+    } catch (err) {
+      failed.push({ title: item.title, reason: err?.message || 'Hata' });
+    }
+  }
+
+  return { chats, failed, total: selectedIndices.length };
+}
+
+/* ================================================================
+   CLOUD EXPORT TARGET
+   ================================================================ */
+
+async function updateCloudTargetOptions() {
+  const targetSelect = document.getElementById('exportTargetSelect');
+  if (!targetSelect) return;
+
+  try {
+    const status = await chrome.runtime.sendMessage({ action: 'CLOUD_GET_STATUS' });
+    if (!status?.ok) return;
+
+    for (const opt of targetSelect.options) {
+      if (opt.value === 'notion') {
+        opt.disabled = !status.notion.connected;
+        opt.textContent = status.notion.connected
+          ? `Notion (${status.notion.label || 'Bagli'})`
+          : 'Notion (Baglanmadi)';
+      }
+      if (opt.value === 'gdrive') {
+        opt.disabled = !status.gdrive.connected;
+        opt.textContent = status.gdrive.connected
+          ? 'Google Drive (Bagli)'
+          : 'Google Drive (Baglanmadi)';
+      }
+      if (opt.value === 'onedrive') {
+        opt.disabled = !status.onedrive.connected;
+        opt.textContent = status.onedrive.connected
+          ? `OneDrive (${status.onedrive.label || 'Bagli'})`
+          : 'OneDrive (Baglanmadi)';
+      }
+    }
+  } catch (_) {}
+}
+
+async function exportToCloudTarget(target, format, data, appName, exportOptions) {
+  if (target === 'local') return null;
+
+  const tokenRes = await chrome.runtime.sendMessage({ action: 'CLOUD_GET_TOKEN', provider: target });
+  if (!tokenRes?.ok) throw new Error(tokenRes?.error || `${target} token alinamadi.`);
+  const token = tokenRes.token;
+
+  if (target === 'notion') {
+    const parentData = await chrome.storage.local.get('notionParentPageId');
+    const parentId = parentData.notionParentPageId || '';
+    const result = await notionCreatePage(
+      token,
+      parentId,
+      data.title || `${appName} Export`,
+      data.messages || [],
+      exportOptions
+    );
+    return { provider: 'Notion', url: result.url || '' };
+  }
+
+  const baseName = buildExportBaseName(data.title, exportOptions);
+  const ext = FORMATS[format]?.ext || 'txt';
+  const filename = `${baseName}.${ext}`;
+  let blob;
+
+  switch (format) {
+    case 'pdf':
+      blob = await generatePdf(data, appName, exportOptions);
+      break;
+    case 'markdown':
+      blob = exportMarkdown(data, appName, exportOptions);
+      break;
+    case 'word':
+      blob = exportWord(data, appName, exportOptions);
+      break;
+    case 'html':
+      blob = exportHtml(data, appName, exportOptions);
+      break;
+    case 'txt':
+      blob = exportPlainText(data, appName, exportOptions);
+      break;
+    default:
+      throw new Error('Desteklenmeyen format.');
+  }
+
+  if (target === 'gdrive') {
+    const result = await googleDriveUpload(token, filename, blob, blob.type);
+    return { provider: 'Google Drive', url: `https://drive.google.com/file/d/${result.id}/view` };
+  }
+
+  if (target === 'onedrive') {
+    await oneDriveUpload(token, filename, blob);
+    return { provider: 'OneDrive', url: '' };
+  }
+
+  throw new Error('Bilinmeyen hedef: ' + target);
 }
 
 async function openExportPreview(payload) {
@@ -648,11 +900,30 @@ async function init() {
       syntaxHighlightToggle.checked = currentSettings.defaultSyntaxHighlight !== false;
     }
 
+    // Batch panel: show/hide based on scope
+    const scopeSelect = document.getElementById('scopeSelect');
+    const batchPanel = document.getElementById('batchPanel');
+    setupBatchPanel();
+
+    if (scopeSelect) {
+      scopeSelect.addEventListener('change', async () => {
+        const isSelected = scopeSelect.value === 'selected';
+        if (batchPanel) batchPanel.classList.toggle('visible', isSelected);
+        if (isSelected && batchConversationItems.length === 0) {
+          await loadBatchList(tab.id, siteInfo.id);
+        }
+      });
+    }
+
+    // Cloud target status
+    updateCloudTargetOptions();
+
     showState('confirm');
 
     exportBtn.onclick = async () => {
       const format = formatSelect.value;
       const scope = document.getElementById('scopeSelect').value;
+      const target = document.getElementById('exportTargetSelect')?.value || 'local';
       const exportingText = document.getElementById('exportingText');
       exportingText.textContent = `${FORMATS[format]?.label || format} olusturuluyor...`;
 
@@ -681,10 +952,23 @@ async function init() {
         }
 
         const filteredExportData =
-          scope === 'all'
+          (scope === 'all' || scope === 'selected')
             ? mergeChatsForExport(filteredPreviewChats, siteInfo.name)
             : filteredPreviewChats[0];
 
+        // Cloud export: dogrudan gonder
+        if (target !== 'local') {
+          exportingText.textContent = `${target} icin yukleniyor...`;
+          const cloudResult = await exportToCloudTarget(target, format, filteredExportData, siteInfo.name, exportOptions);
+          if (states.success) {
+            const urlInfo = cloudResult?.url ? ` URL: ${cloudResult.url}` : '';
+            states.success.querySelector('.message').textContent = `${cloudResult?.provider || target} icin export tamamlandi.${urlInfo}`;
+            showState('success');
+          }
+          return;
+        }
+
+        // Local export: preview ac
         await openExportPreview({
           format,
           appName: siteInfo.name,

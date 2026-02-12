@@ -22,22 +22,42 @@
     </div>
     <div id="confirm" class="state">
       <p class="message" id="confirmText"></p>
+
+      <!-- Kapsam -->
       <label id="scopeLabel" class="format-label">Kapsam:</label>
       <select id="scopeSelect" class="format-select">
         <option value="active">Sadece aktif chat</option>
+        <option value="selected">Secili sohbetler</option>
         <option value="all">Tum chatleri export et</option>
       </select>
+
+      <!-- Batch secim listesi -->
+      <div id="batchPanel" class="batch-panel">
+        <div class="batch-header">
+          <button id="batchSelectAllBtn" class="batch-toggle-btn" type="button">Hepsini Sec</button>
+          <span id="batchCount" class="batch-count">0 secili</span>
+        </div>
+        <div id="batchList" class="batch-list">
+          <p class="batch-loading">Sohbet listesi yukleniyor...</p>
+        </div>
+      </div>
+
+      <!-- Mesaj filtresi -->
       <label id="messageFilterLabel" class="format-label">Mesaj filtresi:</label>
       <select id="messageFilterSelect" class="format-select">
         <option value="all">Hepsi</option>
         <option value="user">Sadece Kullanici</option>
         <option value="assistant">Sadece Asistan</option>
       </select>
+
+      <!-- Etiket dili -->
       <label id="labelLanguageLabel" class="format-label">Etiket dili:</label>
       <select id="labelLanguageSelect" class="format-select">
         <option value="tr">Turkce (Kullanici/Asistan)</option>
         <option value="en">English (User/Assistant)</option>
       </select>
+
+      <!-- Tarih damgasi -->
       <label id="dateStampLabel" class="format-label">Tarih damgasi:</label>
       <select id="dateStampModeSelect" class="format-select">
         <option value="none">Yok</option>
@@ -45,21 +65,27 @@
         <option value="content">Icerikte</option>
         <option value="both">Her ikisi</option>
       </select>
+
+      <!-- Zaman araligi -->
       <label id="dateRangeLabel" class="format-label">Zaman araligi:</label>
       <div class="date-range-row">
         <input id="dateStartInput" class="format-select" type="date">
         <input id="dateEndInput" class="format-select" type="date">
       </div>
+
+      <!-- Kod renklendirme -->
       <label id="syntaxHighlightLabel" class="check-row">
         <input id="syntaxHighlightToggle" type="checkbox" checked>
         <span>Kod renklendirme (PDF/HTML)</span>
       </label>
 
+      <!-- Export / Clipboard tabs -->
       <div class="tab-row">
         <button id="exportTabBtn" class="tab-btn active" type="button">Export</button>
         <button id="clipboardTabBtn" class="tab-btn" type="button">Panoya Kopyala</button>
       </div>
 
+      <!-- Export panel -->
       <div id="exportPanel" class="panel visible">
         <label id="exportFormatLabel" class="format-label">Kaydetme bicimi:</label>
         <select id="formatSelect" class="format-select">
@@ -69,9 +95,19 @@
           <option value="html">HTML (.html)</option>
           <option value="txt">Plain Text (.txt)</option>
         </select>
+
+        <label id="exportTargetLabel" class="format-label">Kaydetme hedefi:</label>
+        <select id="exportTargetSelect" class="format-select">
+          <option value="local">Yerel (bilgisayar)</option>
+          <option value="notion">Notion</option>
+          <option value="gdrive">Google Drive</option>
+          <option value="onedrive">OneDrive</option>
+        </select>
+
         <button id="exportBtn" class="btn btn-primary">Aktar</button>
       </div>
 
+      <!-- Clipboard panel -->
       <div id="clipboardPanel" class="panel">
         <label id="clipboardFormatLabel" class="format-label">Panoya kopyalama bicimi:</label>
         <select id="clipboardFormatSelect" class="format-select">
@@ -81,6 +117,7 @@
         <button id="copyBtn" class="btn btn-secondary">Panoya Kopyala</button>
       </div>
     </div>
+
     <div id="exporting" class="state">
       <div class="spinner"></div>
       <p id="exportingText">Olusturuluyor...</p>
@@ -96,6 +133,7 @@
   <div id="pdfContainer" style="position:fixed;top:0;left:0;width:794px;min-height:1122px;background:#fff;color:#000;opacity:0.01;z-index:-1;overflow:visible;"></div>
   <script src="pdf-template.js"></script>
   <script src="exporters.js"></script>
+  <script src="cloud-providers.js"></script>
   <script src="../lib/html2pdf.bundle.min.js"></script>
   <script src="popup.js"></script>
 </body>

@@ -27,8 +27,141 @@ const SUPPORTED_PATTERNS = [
 ];
 
 const PREVIEW_KEY_PREFIX = 'preview_payload_';
-const BUILD_TAG = '2026-02-12-filename-fix-3';
+const BUILD_TAG = '2026-02-12-cloud-batch';
 console.info('[AI Chat Export] background loaded:', BUILD_TAG);
+
+/* ================================================================
+   OAUTH HANDLERS
+   ================================================================ */
+
+const ONEDRIVE_CLIENT_ID = '';
+
+function getRedirectUrl() {
+  return `https://${chrome.runtime.id}.chromiumapp.org/`;
+}
+
+async function notionConnect(secret) {
+  if (!secret) throw new Error('Notion Integration Secret girilmedi.');
+
+  // Secret'i dogrula: basit bir API cagrisi yap
+  const res = await fetch('https://api.notion.com/v1/users/me', {
+    headers: {
+      Authorization: `Bearer ${secret}`,
+      'Notion-Version': '2022-06-28',
+    },
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `Notion secret gecersiz (HTTP ${res.status}). Dogru secret girdiginizden emin olun.`);
+  }
+
+  const user = await res.json();
+  const name = user.name || user.bot?.owner?.user?.name || 'Notion';
+
+  await chrome.storage.local.set({
+    notionToken: secret,
+    notionWorkspaceName: name,
+  });
+
+  return { ok: true, workspaceName: name };
+}
+
+async function googleDriveOAuthConnect() {
+  const token = await chrome.identity.getAuthToken({ interactive: true });
+  if (!token?.token) throw new Error('Google Drive yetkilendirmesi basarisiz.');
+  await chrome.storage.local.set({ gdriveConnected: true });
+  return { ok: true };
+}
+
+async function googleDriveGetToken() {
+  const token = await chrome.identity.getAuthToken({ interactive: false });
+  if (!token?.token) throw new Error('Google Drive token alinamadi. Yeniden baglanti gerekebilir.');
+  return token.token;
+}
+
+async function oneDriveOAuthConnect() {
+  const clientId = (await chrome.storage.local.get('onedriveClientId')).onedriveClientId || ONEDRIVE_CLIENT_ID;
+  if (!clientId) throw new Error('OneDrive Client ID ayarlanmamis. Ayarlar sayfasindan girin.');
+
+  const redirectUri = getRedirectUrl();
+  const scope = 'Files.ReadWrite User.Read offline_access';
+  const authUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${encodeURIComponent(clientId)}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&response_mode=query`;
+
+  const resultUrl = await chrome.identity.launchWebAuthFlow({ url: authUrl, interactive: true });
+  const code = new URL(resultUrl).searchParams.get('code');
+  if (!code) throw new Error('OneDrive yetkilendirme kodu alinamadi.');
+
+  const tokenRes = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: clientId,
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: redirectUri,
+      scope,
+    }),
+  });
+
+  if (!tokenRes.ok) throw new Error('OneDrive token alinamadi.');
+  const td = await tokenRes.json();
+
+  let userName = '';
+  try {
+    const me = await fetch('https://graph.microsoft.com/v1.0/me', {
+      headers: { Authorization: `Bearer ${td.access_token}` },
+    });
+    if (me.ok) {
+      const u = await me.json();
+      userName = u.displayName || u.mail || '';
+    }
+  } catch (_) {}
+
+  await chrome.storage.local.set({
+    onedriveToken: td.access_token,
+    onedriveRefreshToken: td.refresh_token || '',
+    onedriveExpiry: Date.now() + (td.expires_in || 3600) * 1000,
+    onedriveUserName: userName,
+  });
+
+  return { ok: true, userName };
+}
+
+async function oneDriveRefreshToken() {
+  const data = await chrome.storage.local.get(['onedriveRefreshToken', 'onedriveClientId']);
+  const clientId = data.onedriveClientId || ONEDRIVE_CLIENT_ID;
+  const refreshToken = data.onedriveRefreshToken;
+  if (!refreshToken || !clientId) throw new Error('OneDrive yeniden baglanti gerekli.');
+
+  const tokenRes = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: clientId,
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      scope: 'Files.ReadWrite User.Read offline_access',
+    }),
+  });
+
+  if (!tokenRes.ok) throw new Error('OneDrive token yenilenemedi. Yeniden baglanti gerekli.');
+  const td = await tokenRes.json();
+
+  await chrome.storage.local.set({
+    onedriveToken: td.access_token,
+    onedriveRefreshToken: td.refresh_token || refreshToken,
+    onedriveExpiry: Date.now() + (td.expires_in || 3600) * 1000,
+  });
+
+  return td.access_token;
+}
+
+async function oneDriveGetToken() {
+  const data = await chrome.storage.local.get(['onedriveToken', 'onedriveExpiry']);
+  if (data.onedriveToken && data.onedriveExpiry > Date.now() + 60000) return data.onedriveToken;
+  return oneDriveRefreshToken();
+}
 
 function sanitizeFilenameForDownload(rawName, fallbackExt = 'txt') {
   const value = String(rawName || '').trim();
@@ -247,6 +380,81 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .remove(PREVIEW_KEY_PREFIX + msg.token)
       .then(() => sendResponse({ ok: true }))
       .catch((err) => sendResponse({ ok: false, error: err?.message || 'Preview verisi silinemedi.' }));
+    return true;
+  }
+
+  if (msg.action === 'CLOUD_CONNECT') {
+    (async () => {
+      try {
+        let result;
+        if (msg.provider === 'notion') result = await notionConnect(msg.secret);
+        else if (msg.provider === 'gdrive') result = await googleDriveOAuthConnect();
+        else if (msg.provider === 'onedrive') result = await oneDriveOAuthConnect();
+        else throw new Error('Bilinmeyen provider: ' + msg.provider);
+        sendResponse({ ok: true, ...result });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || 'Baglanti basarisiz.' });
+      }
+    })();
+    return true;
+  }
+
+  if (msg.action === 'CLOUD_DISCONNECT') {
+    (async () => {
+      try {
+        if (msg.provider === 'notion') {
+          await chrome.storage.local.remove(['notionToken', 'notionWorkspaceName', 'notionParentPageId']);
+        } else if (msg.provider === 'gdrive') {
+          await chrome.storage.local.remove(['gdriveConnected']);
+          try { await chrome.identity.clearAllCachedAuthTokens(); } catch (_) {}
+        } else if (msg.provider === 'onedrive') {
+          await chrome.storage.local.remove(['onedriveToken', 'onedriveRefreshToken', 'onedriveExpiry', 'onedriveUserName']);
+        }
+        sendResponse({ ok: true });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || 'Baglanti kesilemedi.' });
+      }
+    })();
+    return true;
+  }
+
+  if (msg.action === 'CLOUD_GET_STATUS') {
+    (async () => {
+      try {
+        const data = await chrome.storage.local.get({
+          notionToken: '', notionWorkspaceName: '',
+          gdriveConnected: false,
+          onedriveToken: '', onedriveExpiry: 0, onedriveUserName: '',
+        });
+        sendResponse({
+          ok: true,
+          notion: { connected: !!data.notionToken, label: data.notionWorkspaceName || '' },
+          gdrive: { connected: !!data.gdriveConnected, label: 'Google Drive' },
+          onedrive: { connected: !!data.onedriveToken && data.onedriveExpiry > Date.now(), label: data.onedriveUserName || '' },
+        });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message });
+      }
+    })();
+    return true;
+  }
+
+  if (msg.action === 'CLOUD_GET_TOKEN') {
+    (async () => {
+      try {
+        let token;
+        if (msg.provider === 'gdrive') token = await googleDriveGetToken();
+        else if (msg.provider === 'onedrive') token = await oneDriveGetToken();
+        else if (msg.provider === 'notion') {
+          const d = await chrome.storage.local.get('notionToken');
+          token = d.notionToken;
+          if (!token) throw new Error('Notion bagli degil.');
+        }
+        sendResponse({ ok: true, token });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || 'Token alinamadi.' });
+      }
+    })();
     return true;
   }
 

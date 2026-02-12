@@ -1,24 +1,37 @@
 {
   "manifest_version": 3,
   "name": "AI Chat PDF Export",
-  "version": "1.0.0",
-  "description": "Export AI chat conversations to PDF, Markdown, Word, HTML or Plain Text",
+  "version": "1.1.0",
+  "description": "Export AI chat conversations to PDF, Markdown, Word, HTML, Plain Text or Cloud",
   "permissions": [
     "activeTab",
     "scripting",
     "downloads",
     "contextMenus",
     "clipboardWrite",
-    "storage"
+    "storage",
+    "identity"
   ],
   "host_permissions": [
     "https://chat.openai.com/*",
     "https://chatgpt.com/*",
     "https://gemini.google.com/*",
-    "https://chat.deepseek.com/*","https://platform.deepseek.com/*","https://*.deepseek.com/*",
+    "https://chat.deepseek.com/*",
+    "https://platform.deepseek.com/*",
+    "https://*.deepseek.com/*",
     "https://claude.ai/*",
-    "https://*.google.com/*"
+    "https://*.google.com/*",
+    "https://api.notion.com/*",
+    "https://www.googleapis.com/*",
+    "https://graph.microsoft.com/*",
+    "https://login.microsoftonline.com/*"
   ],
+  "oauth2": {
+    "client_id": "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/drive.file"
+    ]
+  },
   "action": {
     "default_popup": "popup/popup.html"
   },
@@ -32,7 +45,9 @@
         "https://chat.openai.com/*",
         "https://chatgpt.com/*",
         "https://gemini.google.com/*",
-        "https://chat.deepseek.com/*","https://platform.deepseek.com/*","https://*.deepseek.com/*",
+        "https://chat.deepseek.com/*",
+        "https://platform.deepseek.com/*",
+        "https://*.deepseek.com/*",
         "https://claude.ai/*"
       ],
       "js": ["content/content.js"],

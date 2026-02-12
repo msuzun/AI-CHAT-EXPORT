@@ -23,9 +23,15 @@ h1 {
   font-size: 22px;
 }
 
+h2.section-title {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
 .hint {
   margin: 8px 0 20px;
   color: #6b7280;
+  font-size: 13px;
 }
 
 .label {
@@ -41,6 +47,8 @@ h1 {
   border: 1px solid #d1d5db;
   border-radius: 8px;
   background: #fff;
+  font-size: 13px;
+  color: #111827;
 }
 
 .actions {
@@ -55,6 +63,7 @@ h1 {
   padding: 10px 14px;
   font-weight: 600;
   cursor: pointer;
+  font-size: 13px;
 }
 
 .btn.primary {
@@ -62,9 +71,18 @@ h1 {
   color: #fff;
 }
 
+.btn.primary:hover {
+  background: #1d4ed8;
+}
+
 .btn.secondary {
   background: #e5e7eb;
   color: #111827;
+}
+
+.btn.btn-sm {
+  padding: 7px 12px;
+  font-size: 12px;
 }
 
 .status {
@@ -72,4 +90,66 @@ h1 {
   margin-top: 12px;
   font-size: 13px;
   color: #334155;
+}
+
+.divider {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 28px 0 20px;
+}
+
+/* Cloud cards */
+.cloud-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 14px;
+  background: #fafbfc;
+}
+
+.cloud-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.cloud-name {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.cloud-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 20px;
+}
+
+.cloud-badge.connected {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.cloud-badge.disconnected {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.cloud-fields {
+  margin-bottom: 10px;
+}
+
+.cloud-fields .label {
+  margin-top: 8px;
+}
+
+.cloud-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+
+.cloud-actions {
+  display: flex;
+  gap: 8px;
 }

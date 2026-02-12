@@ -71,6 +71,63 @@
       <button id="saveBtn" class="btn primary">Kaydet</button>
     </div>
     <p id="status" class="status"></p>
+
+    <!-- Cloud Connections -->
+    <hr class="divider">
+    <h2 class="section-title">Bulut Baglantilar</h2>
+    <p class="hint">Sohbetlerinizi dogrudan bulut servislerine aktarin.</p>
+
+    <!-- Notion -->
+    <div class="cloud-card">
+      <div class="cloud-header">
+        <span class="cloud-name">Notion</span>
+        <span id="notionStatus" class="cloud-badge disconnected">Baglanmadi</span>
+      </div>
+      <p class="hint cloud-hint">
+        <a href="https://www.notion.so/my-integrations" target="_blank">notion.so/my-integrations</a> adresinden Internal Integration olusturun ve secret degerini buraya yapisitirin.
+      </p>
+      <div class="cloud-fields" id="notionFields">
+        <label class="label" for="notionSecret">Internal Integration Secret</label>
+        <input id="notionSecret" class="input" type="password" placeholder="ntn_... veya secret_...">
+        <label class="label" for="notionParentPageId">Hedef Sayfa ID (opsiyonel)</label>
+        <input id="notionParentPageId" class="input" type="text" placeholder="Sayfa ID (bos birakilirsa workspace'e eklenir)">
+      </div>
+      <div class="cloud-actions">
+        <button id="notionConnectBtn" class="btn primary btn-sm">Kaydet ve Baglan</button>
+        <button id="notionDisconnectBtn" class="btn secondary btn-sm" style="display:none;">Baglantıyı Kes</button>
+      </div>
+    </div>
+
+    <!-- Google Drive -->
+    <div class="cloud-card">
+      <div class="cloud-header">
+        <span class="cloud-name">Google Drive</span>
+        <span id="gdriveStatus" class="cloud-badge disconnected">Baglanmadi</span>
+      </div>
+      <p class="hint cloud-hint">manifest.json'daki oauth2.client_id ile calisir.</p>
+      <div class="cloud-actions">
+        <button id="gdriveConnectBtn" class="btn primary btn-sm">Baglan</button>
+        <button id="gdriveDisconnectBtn" class="btn secondary btn-sm" style="display:none;">Baglantıyı Kes</button>
+      </div>
+    </div>
+
+    <!-- OneDrive -->
+    <div class="cloud-card">
+      <div class="cloud-header">
+        <span class="cloud-name">OneDrive</span>
+        <span id="onedriveStatus" class="cloud-badge disconnected">Baglanmadi</span>
+      </div>
+      <div class="cloud-fields" id="onedriveFields">
+        <label class="label" for="onedriveClientId">Client ID (Azure App)</label>
+        <input id="onedriveClientId" class="input" type="text" placeholder="Azure App Registration Client ID">
+      </div>
+      <div class="cloud-actions">
+        <button id="onedriveConnectBtn" class="btn primary btn-sm">Baglan</button>
+        <button id="onedriveDisconnectBtn" class="btn secondary btn-sm" style="display:none;">Baglantıyı Kes</button>
+      </div>
+    </div>
+
+    <p id="cloudStatus" class="status"></p>
   </main>
   <script src="options.js"></script>
 </body>
