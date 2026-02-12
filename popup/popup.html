@@ -14,11 +14,16 @@
     </div>
     <div id="unsupported" class="state">
       <p class="message">Bu sayfa desteklenmiyor.</p>
-      <p class="hint">ChatGPT, Gemini, DeepSeek veya Claude chat sayfasında olmalısınız.</p>
+      <p class="hint">ChatGPT, Gemini, DeepSeek veya Claude chat sayfasinda olmalisiniz.</p>
     </div>
     <div id="confirm" class="state">
       <p class="message" id="confirmText"></p>
-      <label class="format-label">Kaydetme biçimi:</label>
+      <label class="format-label">Kapsam:</label>
+      <select id="scopeSelect" class="format-select">
+        <option value="active">Sadece aktif chat</option>
+        <option value="all">Tum chatleri export et</option>
+      </select>
+      <label class="format-label">Kaydetme bicimi:</label>
       <select id="formatSelect" class="format-select">
         <option value="pdf">PDF</option>
         <option value="markdown">Markdown (.md)</option>
@@ -30,11 +35,11 @@
     </div>
     <div id="exporting" class="state">
       <div class="spinner"></div>
-      <p id="exportingText">Oluşturuluyor...</p>
-      <p class="hint">Kaydetmek istediğiniz konumu seçeceksiniz.</p>
+      <p id="exportingText">Olusturuluyor...</p>
+      <p class="hint">Kaydetmek istediginiz konumu sececeksiniz.</p>
     </div>
     <div id="success" class="state">
-      <p class="message" style="color:#059669;">Kaydetmek istediğiniz yeri seçin.</p>
+      <p class="message" style="color:#059669;">Kaydetmek istediginiz yeri secin.</p>
     </div>
     <div id="error" class="state">
       <p class="message error"></p>

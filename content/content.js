@@ -312,19 +312,73 @@
     return fn();
   }
 
+  function normalizeUrl(href) {
+    try {
+      return new URL(href, location.href).href;
+    } catch {
+      return null;
+    }
+  }
+
+  function collectChatLinks(siteId) {
+    const pathMatchers = {
+      chatgpt: ['/c/'],
+      gemini: ['/app/'],
+      deepseek: ['/chat/', '/c/'],
+      claude: ['/chat/'],
+    };
+
+    const matchers = pathMatchers[siteId] || ['/chat/', '/c/'];
+    const links = new Set();
+
+    const anchors = Array.from(document.querySelectorAll('a[href]'));
+    for (const a of anchors) {
+      const href = a.getAttribute('href');
+      if (!href) continue;
+      const url = normalizeUrl(href);
+      if (!url) continue;
+
+      try {
+        const parsed = new URL(url);
+        if (parsed.origin !== location.origin) continue;
+        if (!matchers.some((m) => parsed.pathname.includes(m))) continue;
+        links.add(parsed.href);
+      } catch (_) {}
+    }
+
+    try {
+      const current = new URL(location.href);
+      if (matchers.some((m) => current.pathname.includes(m))) {
+        links.add(current.href);
+      }
+    } catch (_) {}
+
+    return Array.from(links).slice(0, 300);
+  }
+
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.action === 'EXTRACT_CHAT') {
       extractChat(msg.siteId)
         .then((data) => {
           if (!data || !data.messages?.length) {
-            sendResponse({ error: 'Bu sayfada chat içeriği bulunamadı.' });
+            sendResponse({ error: 'Bu sayfada chat icerigi bulunamadi.' });
           } else {
             sendResponse({ data });
           }
         })
         .catch((err) => {
-          sendResponse({ error: err?.message || 'İçerik çıkarılamadı.' });
+          sendResponse({ error: err?.message || 'Icerik cikarilamadi.' });
         });
+      return true;
+    }
+
+    if (msg.action === 'EXTRACT_CHAT_LINKS') {
+      try {
+        const links = collectChatLinks(msg.siteId);
+        sendResponse({ links });
+      } catch (err) {
+        sendResponse({ error: err?.message || 'Sohbet linkleri toplanamadi.' });
+      }
       return true;
     }
   });
