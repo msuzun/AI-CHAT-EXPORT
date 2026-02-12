@@ -79,6 +79,50 @@ function notionRichText(text, annotations = {}, link = null) {
   });
 }
 
+function notionEquationRichText(expression) {
+  const expr = String(expression || '').trim();
+  if (!expr) return [];
+  return [{ type: 'equation', equation: { expression: expr } }];
+}
+
+function extractLatexExpression(node) {
+  if (!node || node.nodeType !== Node.ELEMENT_NODE) return '';
+
+  const directAttrs = ['data-tex', 'data-latex', 'data-math'];
+  for (const attr of directAttrs) {
+    const val = node.getAttribute?.(attr);
+    if (val && val.trim()) return val.trim();
+  }
+
+  const annotation =
+    node.querySelector?.('annotation[encoding="application/x-tex"]') ||
+    node.querySelector?.('annotation');
+  if (annotation?.textContent?.trim()) return annotation.textContent.trim();
+
+  const scriptLatex =
+    node.querySelector?.('script[type="math/tex"]') ||
+    node.querySelector?.('script[type="math/tex; mode=display"]');
+  if (scriptLatex?.textContent?.trim()) return scriptLatex.textContent.trim();
+
+  return '';
+}
+
+function isMathNode(node) {
+  if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+  const tag = String(node.tagName || '').toLowerCase();
+  if (tag === 'math') return true;
+  const cls = String(node.className || '').toLowerCase();
+  return cls.includes('katex') || cls.includes('mathjax') || cls.includes('mjx');
+}
+
+function isDisplayMathNode(node) {
+  if (!isMathNode(node)) return false;
+  const cls = String(node.className || '').toLowerCase();
+  if (cls.includes('katex-display') || cls.includes('math-display')) return true;
+  const mode = String(node.getAttribute?.('mode') || '').toLowerCase();
+  return mode === 'display';
+}
+
 function mergeAnnotations(base, patch) {
   return {
     bold: !!(base.bold || patch.bold),
@@ -92,12 +136,21 @@ function mergeAnnotations(base, patch) {
 function trimNotionRichText(items) {
   if (!Array.isArray(items) || !items.length) return [];
   const out = [...items];
-  while (out.length && !(out[0].text?.content || '').trim()) out.shift();
-  while (out.length && !(out[out.length - 1].text?.content || '').trim()) out.pop();
+  while (out.length && !richTextHasContent(out[0])) out.shift();
+  while (out.length && !richTextHasContent(out[out.length - 1])) out.pop();
   return out;
 }
 
+function richTextHasContent(item) {
+  if (!item) return false;
+  if (item.type === 'equation') return !!String(item.equation?.expression || '').trim();
+  return !!String(item.text?.content || '').trim();
+}
+
 function richTextKey(item) {
+  if (item?.type === 'equation') {
+    return `eq|${item?.equation?.expression || ''}`;
+  }
   const ann = item?.annotations || {};
   const link = item?.text?.link?.url || '';
   return [
@@ -116,8 +169,14 @@ function compactNotionRichText(items, maxItems = 100) {
 
   const merged = [];
   for (const item of trimmed) {
-    const content = item?.text?.content || '';
-    if (!content) continue;
+    if (!richTextHasContent(item)) continue;
+
+    if (item.type !== 'text') {
+      merged.push(item);
+      continue;
+    }
+
+    const content = item.text?.content || '';
 
     const currentKey = richTextKey(item);
     const prev = merged[merged.length - 1];
@@ -148,16 +207,25 @@ function compactNotionRichText(items, maxItems = 100) {
 
   const keepCount = Math.max(1, maxItems - 1);
   const head = merged.slice(0, keepCount);
-  const overflowText = merged.slice(keepCount).map((i) => i?.text?.content || '').join('');
-  const lastBase = merged[keepCount] || merged[merged.length - 1];
+  const overflowText = merged.slice(keepCount).map((i) => {
+    if (i?.type === 'equation') return ` ${i?.equation?.expression || ''} `;
+    return i?.text?.content || '';
+  }).join('');
   const maxTailLen = 1997; // + "..." = 2000
   const tailContent = overflowText.length > maxTailLen ? `${overflowText.slice(0, maxTailLen)}...` : overflowText;
 
   head.push({
-    ...lastBase,
+    type: 'text',
     text: {
-      ...(lastBase?.text || {}),
       content: tailContent || '...',
+    },
+    annotations: {
+      bold: false,
+      italic: false,
+      strikethrough: false,
+      underline: false,
+      code: false,
+      color: 'default',
     },
   });
 
@@ -172,6 +240,11 @@ function inlineNodeToRichText(node, annotations = {}, link = null) {
   }
 
   if (node.nodeType !== Node.ELEMENT_NODE) return [];
+
+  if (isMathNode(node)) {
+    const latex = extractLatexExpression(node);
+    if (latex) return notionEquationRichText(latex);
+  }
 
   const tag = String(node.tagName || '').toLowerCase();
   if (tag === 'br') {
@@ -249,6 +322,35 @@ function hasBlockChildren(node) {
   });
 }
 
+function detectNotionCodeLanguage(node) {
+  const classText = `${node?.className || ''} ${node?.parentElement?.className || ''}`.toLowerCase();
+  const m = classText.match(/(?:language|lang)-([a-z0-9#+-]+)/i);
+  const lang = (m?.[1] || 'plain text').toLowerCase();
+  const map = {
+    js: 'javascript',
+    ts: 'typescript',
+    py: 'python',
+    sh: 'bash',
+    shell: 'bash',
+    yml: 'yaml',
+    cs: 'c#',
+    csharp: 'c#',
+    cpp: 'c++',
+  };
+  const normalized = map[lang] || lang;
+  const allowed = new Set([
+    'plain text', 'abap', 'arduino', 'bash', 'basic', 'c', 'c#', 'c++', 'clojure', 'coffeescript',
+    'css', 'dart', 'diff', 'docker', 'elixir', 'elm', 'erlang', 'flow', 'fortran', 'f#', 'gherkin',
+    'glsl', 'go', 'graphql', 'groovy', 'haskell', 'html', 'java', 'javascript', 'json', 'julia',
+    'kotlin', 'latex', 'less', 'lisp', 'livescript', 'lua', 'makefile', 'markdown', 'markup', 'matlab',
+    'mermaid', 'nix', 'objective-c', 'ocaml', 'pascal', 'perl', 'php', 'powershell', 'prolog',
+    'protobuf', 'python', 'r', 'reason', 'ruby', 'rust', 'sass', 'scala', 'scheme', 'scss',
+    'shell', 'sql', 'swift', 'toml', 'typescript', 'vb.net', 'verilog', 'vhdl', 'visual basic',
+    'webassembly', 'xml', 'yaml', 'java/c/c++/c#',
+  ]);
+  return allowed.has(normalized) ? normalized : 'plain text';
+}
+
 function htmlNodeToNotionBlocks(node) {
   if (!node) return [];
 
@@ -261,6 +363,13 @@ function htmlNodeToNotionBlocks(node) {
   if (node.nodeType !== Node.ELEMENT_NODE) return [];
 
   const tag = String(node.tagName || '').toLowerCase();
+
+  if (isDisplayMathNode(node)) {
+    const latex = extractLatexExpression(node);
+    if (latex) {
+      return [{ object: 'block', type: 'equation', equation: { expression: latex } }];
+    }
+  }
 
   if (tag === 'hr') return [{ object: 'block', type: 'divider', divider: {} }];
 
@@ -280,8 +389,19 @@ function htmlNodeToNotionBlocks(node) {
 
   if (tag === 'pre') {
     const codeText = node.textContent || '';
-    const block = blockWithRichText('code', notionRichText(codeText), { language: 'plain text' });
+    const codeEl = node.querySelector('code') || node;
+    const lang = detectNotionCodeLanguage(codeEl);
+    const block = blockWithRichText('code', notionRichText(codeText), { language: lang || 'plain text' });
     return block ? [block] : [];
+  }
+
+  if (tag === 'code') {
+    const codeText = node.textContent || '';
+    if (codeText.includes('\n')) {
+      const lang = detectNotionCodeLanguage(node);
+      const block = blockWithRichText('code', notionRichText(codeText), { language: lang || 'plain text' });
+      return block ? [block] : [];
+    }
   }
 
   if (tag === 'blockquote') {
