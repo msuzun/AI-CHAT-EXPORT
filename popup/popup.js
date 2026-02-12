@@ -20,6 +20,8 @@ const DEFAULT_SETTINGS = {
   defaultClipboardFormat: 'markdown',
   defaultMessageFilter: 'all',
   defaultLabelLanguage: 'tr',
+  defaultDateStampMode: 'none',
+  defaultSyntaxHighlight: true,
   language: 'tr',
   theme: 'system',
 };
@@ -34,6 +36,9 @@ const I18N = {
     clipboardFormatLabel: 'Panoya kopyalama bicimi:',
     messageFilterLabel: 'Mesaj filtresi:',
     labelLanguageLabel: 'Etiket dili:',
+    dateStampLabel: 'Tarih damgasi:',
+    dateRangeLabel: 'Zaman araligi:',
+    syntaxHighlightLabel: 'Kod renklendirme (PDF/HTML)',
     exportBtn: 'Aktar',
     copyBtn: 'Panoya Kopyala',
     confirmText: (site) => `${site} icin export kapsamini secin.`,
@@ -48,6 +53,9 @@ const I18N = {
     clipboardFormatLabel: 'Clipboard format:',
     messageFilterLabel: 'Message filter:',
     labelLanguageLabel: 'Label language:',
+    dateStampLabel: 'Date stamp:',
+    dateRangeLabel: 'Date range:',
+    syntaxHighlightLabel: 'Syntax highlighting (PDF/HTML)',
     exportBtn: 'Export',
     copyBtn: 'Copy',
     confirmText: (site) => `Choose export scope for ${site}.`,
@@ -109,6 +117,9 @@ function applyLanguage(language, siteName) {
     ['clipboardFormatLabel', dict.clipboardFormatLabel],
     ['messageFilterLabel', dict.messageFilterLabel],
     ['labelLanguageLabel', dict.labelLanguageLabel],
+    ['dateStampLabel', dict.dateStampLabel],
+    ['dateRangeLabel', dict.dateRangeLabel],
+    ['syntaxHighlightLabel', dict.syntaxHighlightLabel],
     ['exportBtn', dict.exportBtn],
     ['copyBtn', dict.copyBtn],
     ['openSettingsBtn', dict.settingsBtn],
@@ -131,6 +142,8 @@ function setupTabs() {
   const exportPanel = document.getElementById('exportPanel');
   const clipboardPanel = document.getElementById('clipboardPanel');
 
+  if (!exportTabBtn || !clipboardTabBtn || !exportPanel || !clipboardPanel) return;
+
   function activate(which) {
     const exportActive = which === 'export';
     exportTabBtn.classList.toggle('active', exportActive);
@@ -145,7 +158,43 @@ function setupTabs() {
 }
 
 function safeFilename(name) {
-  return (name || 'chat').replace(/[<>:"/\\|?*]/g, '_').slice(0, 100);
+  let out = String(name || '').trim();
+  if (!out) return 'chat_export';
+  const trMap = { ç: 'c', Ç: 'C', ğ: 'g', Ğ: 'G', ı: 'i', İ: 'I', ö: 'o', Ö: 'O', ş: 's', Ş: 'S', ü: 'u', Ü: 'U' };
+  out = out.replace(/[çÇğĞıİöÖşŞüÜ]/g, (c) => trMap[c] || c);
+  out = out
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\x00-\x1f\x80-\x9f]/g, '')
+    .replace(/[<>:"/\\|?*]/g, '_')
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g, '')
+    .replace(/[^\x20-\x7E]/g, '')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^[_. ]+|[_. ]+$/g, '');
+
+  if (!out || out.length < 2) out = 'chat_export';
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(out)) out = `export_${out}`;
+  return out.slice(0, 80);
+}
+
+function formatDateStampForFilename(iso) {
+  const d = new Date(iso || Date.now());
+  if (Number.isNaN(d.getTime())) return '';
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}_${hh}-${mi}`;
+}
+
+function buildExportBaseName(title, exportOptions) {
+  const base = safeFilename(title);
+  const mode = exportOptions?.dateStampMode || 'none';
+  if (mode !== 'filename' && mode !== 'both') return base;
+  const stamp = formatDateStampForFilename(exportOptions?.exportedAt);
+  return stamp ? `${base}_${stamp}` : base;
 }
 
 function escapeHtml(text) {
@@ -183,16 +232,15 @@ function isLikelyChatUrl(siteId, rawUrl) {
   }
 }
 
-async function generatePdf(data, appName) {
+async function generatePdf(data, appName, exportOptions) {
   const container = document.getElementById('pdfContainer');
-  const html = buildPdfHtml(data, appName);
+  const html = buildPdfHtml(data, appName, exportOptions);
   container.innerHTML = html;
 
   await new Promise((r) => setTimeout(r, 150));
 
   const opt = {
     margin: [12, 10, 18, 10],
-    filename: `${safeFilename(data.title)}.pdf`,
     image: { type: 'jpeg', quality: 0.95 },
     html2canvas: { scale: 2, useCORS: true, letterRendering: true, logging: false },
     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
@@ -204,42 +252,64 @@ async function generatePdf(data, appName) {
 }
 
 async function downloadFile(blob, filename) {
+  // Yöntem 1: Blob URL + <a download>
+  try {
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename || 'chat_export';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 15000);
+    return;
+  } catch (_) {}
+
+  // Yöntem 2: Background script üzerinden (fallback)
   const dataUrl = await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
-  const response = await chrome.runtime.sendMessage({
-    action: 'DOWNLOAD_FILE',
-    dataUrl,
-    filename,
-  });
-  if (!response?.ok) throw new Error(response?.error || 'Indirme baslatilamadi');
+
+  if (filename) {
+    const r1 = await chrome.runtime.sendMessage({ action: 'DOWNLOAD_FILE', dataUrl, filename });
+    if (r1?.ok) return;
+  }
+
+  const ext = (filename || '').split('.').pop() || 'txt';
+  const fallback = `chat_export_${Date.now()}.${ext}`;
+  const r2 = await chrome.runtime.sendMessage({ action: 'DOWNLOAD_FILE', dataUrl, filename: fallback });
+  if (r2?.ok) return;
+
+  const r3 = await chrome.runtime.sendMessage({ action: 'DOWNLOAD_FILE', dataUrl });
+  if (!r3?.ok) throw new Error(r3?.error || 'Indirme baslatilamadi');
 }
 
-async function exportToFormat(format, data, appName) {
-  const baseName = safeFilename(data.title);
+async function exportToFormat(format, data, appName, exportOptions) {
+  const baseName = buildExportBaseName(data.title, exportOptions);
   switch (format) {
     case 'pdf': {
       if (typeof html2pdf === 'undefined') throw new Error('PDF kutuphanesi yuklenemedi.');
-      const blob = await generatePdf(data, appName);
+      const blob = await generatePdf(data, appName, exportOptions);
       return downloadFile(blob, `${baseName}.pdf`);
     }
     case 'markdown': {
-      const blob = exportMarkdown(data, appName);
+      const blob = exportMarkdown(data, appName, exportOptions);
       return downloadFile(blob, `${baseName}.md`);
     }
     case 'word': {
-      const blob = exportWord(data, appName);
+      const blob = exportWord(data, appName, exportOptions);
       return downloadFile(blob, `${baseName}.doc`);
     }
     case 'html': {
-      const blob = exportHtml(data, appName);
+      const blob = exportHtml(data, appName, exportOptions);
       return downloadFile(blob, `${baseName}.html`);
     }
     case 'txt': {
-      const blob = exportPlainText(data, appName);
+      const blob = exportPlainText(data, appName, exportOptions);
       return downloadFile(blob, `${baseName}.txt`);
     }
     default:
@@ -314,6 +384,54 @@ function mergeChatsForExport(chats, appName) {
     title: `${appName} Tum Sohbetler (${chats.length})`,
     messages: mergedMessages,
   };
+}
+
+function parseDateBoundary(value, isEnd) {
+  if (!value) return null;
+  const d = new Date(value + (isEnd ? 'T23:59:59.999' : 'T00:00:00.000'));
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+}
+
+function parseMessageTimestamp(msg) {
+  if (!msg?.timestamp) return null;
+  const d = new Date(msg.timestamp);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+}
+
+function filterDataByDateRange(data, rangeStart, rangeEnd) {
+  if (!rangeStart && !rangeEnd) return { ...data };
+
+  const start = parseDateBoundary(rangeStart, false);
+  const end = parseDateBoundary(rangeEnd, true);
+  if (!start && !end) return { ...data };
+
+  const allMessages = Array.isArray(data?.messages) ? data.messages : [];
+
+  const hasTimestamp = allMessages.some((m) => m.role !== 'meta' && !!parseMessageTimestamp(m));
+  if (!hasTimestamp) {
+    // Mesajlarda tarih bilgisi yoksa filtreyi atla, export'u engelleme
+    console.warn('[AI Chat Export] Tarih araligi filtresi atlanacak: mesajlarda tarih bilgisi yok.');
+    return { ...data, _dateRangeSkipped: true };
+  }
+
+  const filtered = allMessages.filter((m) => {
+    if (m.role === 'meta') return true;
+    const ts = parseMessageTimestamp(m);
+    if (!ts) return true; // tarihsiz mesajlari dahil et
+    if (start && ts < start) return false;
+    if (end && ts > end) return false;
+    return true;
+  });
+
+  const nonMeta = filtered.filter((m) => m.role !== 'meta').length;
+  if (!nonMeta) {
+    console.warn('[AI Chat Export] Secilen tarih araliginda mesaj bulunamadi, tum mesajlar kullanilacak.');
+    return { ...data, _dateRangeSkipped: true };
+  }
+
+  return { ...data, messages: filtered };
 }
 
 async function collectAllChatsFromLinks(tab, siteInfo, exportingTextEl, progressBaseLabel) {
@@ -404,17 +522,29 @@ async function copyTextToClipboard(text) {
   if (!ok) throw new Error('Panoya kopyalama basarisiz oldu.');
 }
 
-function buildClipboardText(format, data, appName) {
-  const options = getCurrentExportOptions();
+function buildClipboardText(format, data, appName, exportOptions) {
+  const options = exportOptions || getCurrentExportOptions();
   if (format === 'markdown') return buildMarkdownText(data, appName, options);
   if (format === 'txt') return buildPlainText(data, appName, options);
   throw new Error('Panoya kopyalama icin desteklenmeyen format.');
 }
 
 function getCurrentExportOptions() {
+  const messageFilterEl = document.getElementById('messageFilterSelect');
+  const labelLanguageEl = document.getElementById('labelLanguageSelect');
+  const dateStampEl = document.getElementById('dateStampModeSelect');
+  const dateStartEl = document.getElementById('dateStartInput');
+  const dateEndEl = document.getElementById('dateEndInput');
+  const syntaxEl = document.getElementById('syntaxHighlightToggle');
+
   return {
-    messageFilter: document.getElementById('messageFilterSelect').value,
-    labelLanguage: document.getElementById('labelLanguageSelect').value,
+    messageFilter: messageFilterEl?.value || currentSettings.defaultMessageFilter || 'all',
+    labelLanguage: labelLanguageEl?.value || currentSettings.defaultLabelLanguage || 'tr',
+    dateStampMode: dateStampEl?.value || currentSettings.defaultDateStampMode || 'none',
+    dateRangeStart: dateStartEl?.value || '',
+    dateRangeEnd: dateEndEl?.value || '',
+    syntaxHighlight: syntaxEl ? syntaxEl.checked : currentSettings.defaultSyntaxHighlight !== false,
+    exportedAt: new Date().toISOString(),
   };
 }
 
@@ -443,9 +573,12 @@ async function init() {
     applyLanguage(currentSettings.language);
     setupTabs();
 
-    document.getElementById('openSettingsBtn').onclick = () => {
-      chrome.runtime.openOptionsPage();
-    };
+    const settingsBtn = document.getElementById('openSettingsBtn');
+    if (settingsBtn) {
+      settingsBtn.onclick = () => {
+        chrome.runtime.openOptionsPage();
+      };
+    }
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.url) {
@@ -479,22 +612,45 @@ async function init() {
     const clipboardFormatSelect = document.getElementById('clipboardFormatSelect');
     const messageFilterSelect = document.getElementById('messageFilterSelect');
     const labelLanguageSelect = document.getElementById('labelLanguageSelect');
+    const dateStampModeSelect = document.getElementById('dateStampModeSelect');
+    const syntaxHighlightToggle = document.getElementById('syntaxHighlightToggle');
+    const exportBtn = document.getElementById('exportBtn');
+    const copyBtn = document.getElementById('copyBtn');
+
+    const required = {
+      formatSelect,
+      clipboardFormatSelect,
+      exportBtn,
+      copyBtn,
+    };
+    const missing = Object.entries(required)
+      .filter(([, el]) => !el)
+      .map(([key]) => key);
+    if (missing.length) {
+      throw new Error(`Popup UI eksik: ${missing.join(', ')}`);
+    }
     if ([...formatSelect.options].some((o) => o.value === currentSettings.defaultFormat)) {
       formatSelect.value = currentSettings.defaultFormat;
     }
     if ([...clipboardFormatSelect.options].some((o) => o.value === currentSettings.defaultClipboardFormat)) {
       clipboardFormatSelect.value = currentSettings.defaultClipboardFormat;
     }
-    if ([...messageFilterSelect.options].some((o) => o.value === currentSettings.defaultMessageFilter)) {
+    if (messageFilterSelect && [...messageFilterSelect.options].some((o) => o.value === currentSettings.defaultMessageFilter)) {
       messageFilterSelect.value = currentSettings.defaultMessageFilter;
     }
-    if ([...labelLanguageSelect.options].some((o) => o.value === currentSettings.defaultLabelLanguage)) {
+    if (labelLanguageSelect && [...labelLanguageSelect.options].some((o) => o.value === currentSettings.defaultLabelLanguage)) {
       labelLanguageSelect.value = currentSettings.defaultLabelLanguage;
+    }
+    if (dateStampModeSelect && [...dateStampModeSelect.options].some((o) => o.value === currentSettings.defaultDateStampMode)) {
+      dateStampModeSelect.value = currentSettings.defaultDateStampMode;
+    }
+    if (syntaxHighlightToggle) {
+      syntaxHighlightToggle.checked = currentSettings.defaultSyntaxHighlight !== false;
     }
 
     showState('confirm');
 
-    document.getElementById('exportBtn').onclick = async () => {
+    exportBtn.onclick = async () => {
       const format = formatSelect.value;
       const scope = document.getElementById('scopeSelect').value;
       const exportingText = document.getElementById('exportingText');
@@ -511,14 +667,32 @@ async function init() {
           FORMATS[format]?.label || format
         );
 
+        const exportOptions = getCurrentExportOptions();
+        const rangeStart = exportOptions.dateRangeStart;
+        const rangeEnd = exportOptions.dateRangeEnd;
+        const filteredPreviewChats = (resolved.previewChats || []).map((chat) =>
+          filterDataByDateRange(chat, rangeStart, rangeEnd)
+        );
+
+        const dateRangeSkipped = filteredPreviewChats.some((c) => c._dateRangeSkipped);
+        let infoText = resolved.infoText;
+        if (dateRangeSkipped && (rangeStart || rangeEnd)) {
+          infoText += ' (Tarih araligi filtresi: mesajlarda tarih bilgisi bulunamadigi icin atlanildi.)';
+        }
+
+        const filteredExportData =
+          scope === 'all'
+            ? mergeChatsForExport(filteredPreviewChats, siteInfo.name)
+            : filteredPreviewChats[0];
+
         await openExportPreview({
           format,
           appName: siteInfo.name,
           scope,
-          exportData: resolved.data,
-          previewChats: resolved.previewChats,
-          infoText: resolved.infoText,
-          exportOptions: getCurrentExportOptions(),
+          exportData: filteredExportData,
+          previewChats: filteredPreviewChats,
+          infoText,
+          exportOptions,
         });
         window.close();
       } catch (err) {
@@ -526,7 +700,7 @@ async function init() {
       }
     };
 
-    document.getElementById('copyBtn').onclick = async () => {
+    copyBtn.onclick = async () => {
       const scope = document.getElementById('scopeSelect').value;
       const clipboardFormat = clipboardFormatSelect.value;
       const exportingText = document.getElementById('exportingText');
@@ -544,11 +718,24 @@ async function init() {
           formatLabel
         );
 
-        const text = buildClipboardText(clipboardFormat, resolved.data, siteInfo.name);
+        const exportOptions = getCurrentExportOptions();
+        const filteredPreviewChats = (resolved.previewChats || []).map((chat) =>
+          filterDataByDateRange(chat, exportOptions.dateRangeStart, exportOptions.dateRangeEnd)
+        );
+        const dateRangeSkipped = filteredPreviewChats.some((c) => c._dateRangeSkipped);
+        const filteredData =
+          scope === 'all'
+            ? mergeChatsForExport(filteredPreviewChats, siteInfo.name)
+            : filteredPreviewChats[0];
+
+        const text = buildClipboardText(clipboardFormat, filteredData, siteInfo.name, exportOptions);
         await copyTextToClipboard(text);
 
         if (states.success) {
-          const extra = scope === 'all' ? ` ${resolved.infoText}` : '';
+          let extra = scope === 'all' ? ` ${resolved.infoText}` : '';
+          if (dateRangeSkipped && (exportOptions.dateRangeStart || exportOptions.dateRangeEnd)) {
+            extra += ' (Tarih araligi filtresi atlanildi.)';
+          }
           states.success.querySelector('.message').textContent = `Panoya kopyalandi.${extra}`;
           showState('success');
         }
@@ -557,8 +744,9 @@ async function init() {
         showError(err?.message || 'Panoya kopyalama basarisiz oldu.');
       }
     };
-  } catch (_) {
-    showError('Sayfa okunamadi. Lutfen chat sayfasinda oldugunuzdan emin olun.');
+  } catch (err) {
+    const msg = err?.message ? `Sayfa okunamadi: ${err.message}` : 'Sayfa okunamadi. Lutfen chat sayfasinda oldugunuzdan emin olun.';
+    showError(msg);
   }
 }
 

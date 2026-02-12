@@ -27,6 +27,35 @@ const SUPPORTED_PATTERNS = [
 ];
 
 const PREVIEW_KEY_PREFIX = 'preview_payload_';
+const BUILD_TAG = '2026-02-12-filename-fix-3';
+console.info('[AI Chat Export] background loaded:', BUILD_TAG);
+
+function sanitizeFilenameForDownload(rawName, fallbackExt = 'txt') {
+  const value = String(rawName || '').trim();
+  if (!value) return `chat_export.${fallbackExt}`;
+
+  // Türkçe karakter dönüşümü
+  const trMap = { ç: 'c', Ç: 'C', ğ: 'g', Ğ: 'G', ı: 'i', İ: 'I', ö: 'o', Ö: 'O', ş: 's', Ş: 'S', ü: 'u', Ü: 'U' };
+  let cleaned = value.replace(/[çÇğĞıİöÖşŞüÜ]/g, (c) => trMap[c] || c);
+  cleaned = cleaned
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\x00-\x1f\x80-\x9f]/g, '')
+    .replace(/[<>:"/\\|?*]/g, '_')
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g, '')
+    .replace(/[^\x20-\x7E]/g, '')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^[_. ]+|[_. ]+$/g, '');
+
+  const parts = cleaned.split('.');
+  const ext = parts.length > 1 ? parts.pop() : fallbackExt;
+  let base = parts.join('.').replace(/^[_. ]+|[_. ]+$/g, '').trim();
+  if (!base || base.length < 2) base = 'chat_export';
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(base)) base = `export_${base}`;
+  const safeExt = String(ext || fallbackExt).replace(/[^a-z0-9]/gi, '').toLowerCase() || fallbackExt;
+  return `${base.slice(0, 80)}.${safeExt}`;
+}
 
 function getSiteByUrl(rawUrl) {
   if (!rawUrl) return null;
@@ -128,13 +157,29 @@ async function runExportInRunner(format, data, appName) {
     active: false,
   });
 
+  const defaultOptions = await chrome.storage.sync.get({
+    defaultMessageFilter: 'all',
+    defaultLabelLanguage: 'tr',
+    defaultDateStampMode: 'none',
+    defaultSyntaxHighlight: true,
+  });
+  const exportOptions = {
+    messageFilter: defaultOptions.defaultMessageFilter,
+    labelLanguage: defaultOptions.defaultLabelLanguage,
+    dateStampMode: defaultOptions.defaultDateStampMode,
+    syntaxHighlight: defaultOptions.defaultSyntaxHighlight !== false,
+    exportedAt: new Date().toISOString(),
+  };
+
   try {
     await waitForTabComplete(runnerTab.id);
+    const sanitizedAppName = appName.replace(/[/\\?%*:|"<>\s]/g, '-');
     const response = await chrome.tabs.sendMessage(runnerTab.id, {
       action: 'RUN_CONTEXT_EXPORT',
       format,
       data,
-      appName,
+      appName:sanitizedAppName,
+      exportOptions,
     });
 
     if (!response?.ok) {
@@ -206,14 +251,36 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === 'DOWNLOAD_FILE' || msg.action === 'DOWNLOAD_PDF') {
-    chrome.downloads
-      .download({
-        url: msg.dataUrl,
-        filename: msg.filename,
-        saveAs: true,
-      })
-      .then(() => sendResponse({ ok: true }))
-      .catch((err) => sendResponse({ ok: false, error: err?.message }));
+    (async () => {
+      const requestedName = msg.filename
+        ? sanitizeFilenameForDownload(msg.filename, 'txt')
+        : null;
+
+      // 1. deneme: sanitize edilmiş dosya adıyla
+      if (requestedName) {
+        try {
+          await chrome.downloads.download({ url: msg.dataUrl, filename: requestedName, saveAs: true });
+          sendResponse({ ok: true });
+          return;
+        } catch (_) {}
+      }
+
+      // 2. deneme: basit fallback adıyla
+      const ext = requestedName ? requestedName.split('.').pop() : 'txt';
+      try {
+        await chrome.downloads.download({ url: msg.dataUrl, filename: `chat_export_${Date.now()}.${ext}`, saveAs: true });
+        sendResponse({ ok: true });
+        return;
+      } catch (_) {}
+
+      // 3. deneme: dosya adı olmadan
+      try {
+        await chrome.downloads.download({ url: msg.dataUrl, saveAs: true });
+        sendResponse({ ok: true });
+      } catch (finalErr) {
+        sendResponse({ ok: false, error: finalErr?.message || 'Download basarisiz.' });
+      }
+    })();
     return true;
   }
 });

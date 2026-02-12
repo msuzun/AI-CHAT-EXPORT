@@ -48,6 +48,45 @@
     return html;
   }
 
+  function normalizeTimestamp(value) {
+    if (!value) return null;
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString();
+  }
+
+  function extractTimestampFromElement(block) {
+    if (!block) return null;
+
+    const candidates = [];
+    const directAttrs = ['data-time', 'data-timestamp', 'datetime', 'title', 'aria-label'];
+    directAttrs.forEach((attr) => {
+      const v = block.getAttribute?.(attr);
+      if (v) candidates.push(v);
+    });
+
+    const timeEl = block.querySelector?.('time[datetime], time');
+    if (timeEl) {
+      const dt = timeEl.getAttribute('datetime');
+      if (dt) candidates.push(dt);
+      if (timeEl.textContent?.trim()) candidates.push(timeEl.textContent.trim());
+    }
+
+    const nestedTimeAttrs = block.querySelector?.('[data-time], [data-timestamp], [datetime], [title], [aria-label]');
+    if (nestedTimeAttrs) {
+      directAttrs.forEach((attr) => {
+        const v = nestedTimeAttrs.getAttribute?.(attr);
+        if (v) candidates.push(v);
+      });
+    }
+
+    for (const c of candidates) {
+      const ts = normalizeTimestamp(c);
+      if (ts) return ts;
+    }
+    return null;
+  }
+
   async function extractChatGPT() {
     const messages = [];
     const items =
@@ -72,7 +111,7 @@
           ? 'user'
           : 'assistant';
         const html = await serializeWithImages(prose);
-        return { messages: [{ role, html }], title: getTitle() };
+        return { messages: [{ role, html, timestamp: extractTimestampFromElement(prose) }], title: getTitle() };
       }
     }
 
@@ -90,7 +129,11 @@
         block;
       if (content && content.textContent?.trim()) {
         const html = await serializeWithImages(content);
-        messages.push({ role: role === 'user' ? 'user' : 'assistant', html });
+        messages.push({
+          role: role === 'user' ? 'user' : 'assistant',
+          html,
+          timestamp: extractTimestampFromElement(block) || extractTimestampFromElement(content),
+        });
       }
     }
 
@@ -134,7 +177,10 @@
       );
       if (anyContent) {
         const html = await serializeWithImages(anyContent);
-        return { messages: [{ role: 'assistant', html }], title: getTitle() };
+        return {
+          messages: [{ role: 'assistant', html, timestamp: extractTimestampFromElement(anyContent) }],
+          title: getTitle(),
+        };
       }
     }
 
@@ -151,7 +197,11 @@
         block;
       if (content && content.textContent?.trim()) {
         const html = await serializeWithImages(content);
-        messages.push({ role: isUser ? 'user' : 'assistant', html });
+        messages.push({
+          role: isUser ? 'user' : 'assistant',
+          html,
+          timestamp: extractTimestampFromElement(block) || extractTimestampFromElement(content),
+        });
       }
     }
 
@@ -219,7 +269,10 @@
       );
       if (content && content.textContent?.trim()) {
         const html = await serializeWithImages(content);
-        return { messages: [{ role: 'assistant', html }], title: getTitle() };
+        return {
+          messages: [{ role: 'assistant', html, timestamp: extractTimestampFromElement(content) }],
+          title: getTitle(),
+        };
       }
     }
 
@@ -230,6 +283,7 @@
         block.getAttribute?.('data-role') === 'user' ||
         block.querySelector?.('[class*="user"]');
       const content =
+        block.querySelector?.('.ds-markdown') ||
         block.querySelector?.('[class*="markdown"]') ||
         block.querySelector?.('[class*="content"]') ||
         block.querySelector?.('[class*="text"]') ||
@@ -237,10 +291,41 @@
         block.querySelector?.('.prose') ||
         block;
       if (content && content.textContent?.trim()) {
+        const hasMarkdown = !!block.querySelector?.('.ds-markdown, [class*="markdown"], pre, code, ol, ul, h1, h2, h3');
         const html = await serializeWithImages(content);
-        messages.push({ role: isUser ? 'user' : 'assistant', html });
+        messages.push({
+          role: isUser ? 'user' : 'assistant',
+          html,
+          _hasMarkdown: hasMarkdown,
+          timestamp: extractTimestampFromElement(block) || extractTimestampFromElement(content),
+        });
       }
     }
+
+    // DeepSeek: Eğer tüm mesajlar aynı rol olarak tespit edildiyse,
+    // yapısal analiz ile düzelt (markdown olmayan = user, olan = assistant)
+    const roles = messages.filter((m) => m.role !== 'meta').map((m) => m.role);
+    const allSame = roles.length > 1 && roles.every((r) => r === roles[0]);
+    if (allSame) {
+      // Yöntem 1: Markdown/yapısal fark ile ayır
+      const hasStructuralDiff = messages.some((m) => m._hasMarkdown) && messages.some((m) => !m._hasMarkdown);
+      if (hasStructuralDiff) {
+        messages.forEach((m) => {
+          if (m.role !== 'meta') m.role = m._hasMarkdown ? 'assistant' : 'user';
+        });
+      } else {
+        // Yöntem 2: Alternating pattern (user, assistant, user, assistant...)
+        let expectedRole = 'user';
+        messages.forEach((m) => {
+          if (m.role !== 'meta') {
+            m.role = expectedRole;
+            expectedRole = expectedRole === 'user' ? 'assistant' : 'user';
+          }
+        });
+      }
+    }
+    // _hasMarkdown geçici alanını temizle
+    messages.forEach((m) => delete m._hasMarkdown);
 
     return { messages, title: getTitle() };
 
@@ -267,7 +352,10 @@
       );
       if (content) {
         const html = await serializeWithImages(content);
-        return { messages: [{ role: 'assistant', html }], title: getTitle() };
+        return {
+          messages: [{ role: 'assistant', html, timestamp: extractTimestampFromElement(content) }],
+          title: getTitle(),
+        };
       }
     }
 
@@ -284,7 +372,11 @@
         block;
       if (content && content.textContent?.trim()) {
         const html = await serializeWithImages(content);
-        messages.push({ role: isUser ? 'user' : 'assistant', html });
+        messages.push({
+          role: isUser ? 'user' : 'assistant',
+          html,
+          timestamp: extractTimestampFromElement(block) || extractTimestampFromElement(content),
+        });
       }
     }
 

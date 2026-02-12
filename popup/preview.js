@@ -1,5 +1,53 @@
 function safeFilename(name) {
-  return (name || 'chat').replace(/[<>:"/\\|?*]/g, '_').slice(0, 100);
+  let out = String(name || '').trim();
+  if (!out) return 'chat_export';
+  const trMap = { ç: 'c', Ç: 'C', ğ: 'g', Ğ: 'G', ı: 'i', İ: 'I', ö: 'o', Ö: 'O', ş: 's', Ş: 'S', ü: 'u', Ü: 'U' };
+  out = out.replace(/[çÇğĞıİöÖşŞüÜ]/g, (c) => trMap[c] || c);
+  out = out
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\x00-\x1f\x80-\x9f]/g, '')
+    .replace(/[<>:"/\\|?*]/g, '_')
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g, '')
+    .replace(/[^\x20-\x7E]/g, '')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^[_. ]+|[_. ]+$/g, '');
+
+  if (!out || out.length < 2) out = 'chat_export';
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(out)) out = `export_${out}`;
+  return out.slice(0, 80);
+}
+
+function formatDateStampForFilename(iso) {
+  const d = new Date(iso || Date.now());
+  if (Number.isNaN(d.getTime())) return '';
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}_${hh}-${mi}`;
+}
+
+function buildExportBaseName(title, exportOptions) {
+  const base = safeFilename(title);
+  const mode = exportOptions?.dateStampMode || 'none';
+  if (mode !== 'filename' && mode !== 'both') return base;
+  const stamp = formatDateStampForFilename(exportOptions?.exportedAt);
+  return stamp ? `${base}_${stamp}` : base;
+}
+
+function normalizeExportOptions(options) {
+  return {
+    messageFilter: options?.messageFilter || 'all',
+    labelLanguage: options?.labelLanguage || 'tr',
+    dateStampMode: options?.dateStampMode || 'none',
+    dateRangeStart: options?.dateRangeStart || '',
+    dateRangeEnd: options?.dateRangeEnd || '',
+    syntaxHighlight: options?.syntaxHighlight !== false,
+    exportedAt: options?.exportedAt || new Date().toISOString(),
+  };
 }
 
 function htmlEscape(s) {
@@ -30,7 +78,6 @@ async function generatePdf(data, appName, exportOptions) {
 
   const opt = {
     margin: [12, 10, 18, 10],
-    filename: `${safeFilename(data.title)}.pdf`,
     image: { type: 'jpeg', quality: 0.95 },
     html2canvas: { scale: 2, useCORS: true, letterRendering: true, logging: false },
     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
@@ -42,22 +89,44 @@ async function generatePdf(data, appName, exportOptions) {
 }
 
 async function downloadFile(blob, filename) {
+  // Yöntem 1: Blob URL + <a download> — dosya adını doğrudan belirler
+  try {
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename || 'chat_export';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 15000);
+    return;
+  } catch (_) {}
+
+  // Yöntem 2: Background script üzerinden (fallback)
   const dataUrl = await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
-  const response = await chrome.runtime.sendMessage({
-    action: 'DOWNLOAD_FILE',
-    dataUrl,
-    filename,
-  });
-  if (!response?.ok) throw new Error(response?.error || 'Indirme baslatilamadi');
+
+  if (filename) {
+    const r1 = await chrome.runtime.sendMessage({ action: 'DOWNLOAD_FILE', dataUrl, filename });
+    if (r1?.ok) return;
+  }
+
+  const ext = (filename || '').split('.').pop() || 'txt';
+  const fallback = `chat_export_${Date.now()}.${ext}`;
+  const r2 = await chrome.runtime.sendMessage({ action: 'DOWNLOAD_FILE', dataUrl, filename: fallback });
+  if (r2?.ok) return;
+
+  const r3 = await chrome.runtime.sendMessage({ action: 'DOWNLOAD_FILE', dataUrl });
+  if (!r3?.ok) throw new Error(r3?.error || 'Indirme baslatilamadi');
 }
 
 async function exportToFormat(format, data, appName, exportOptions) {
-  const baseName = safeFilename(data.title);
+  const baseName = buildExportBaseName(data.title, exportOptions);
   switch (format) {
     case 'pdf': {
       if (typeof html2pdf === 'undefined') throw new Error('PDF kutuphanesi yuklenemedi.');
@@ -135,7 +204,7 @@ async function init() {
   }
 
   const payload = response.payload;
-  const exportOptions = payload.exportOptions || { messageFilter: 'all', labelLanguage: 'tr' };
+  const exportOptions = normalizeExportOptions(payload.exportOptions);
   const previewChats = Array.isArray(payload.previewChats) ? payload.previewChats : [];
   const total = previewChats.length || 1;
   let page = 0;

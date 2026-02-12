@@ -183,3 +183,18 @@ body.theme-dark {
 .panel.visible {
   display: flex;
 }
+
+.date-range-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  text-align: left;
+}

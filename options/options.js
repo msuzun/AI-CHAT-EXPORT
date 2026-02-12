@@ -3,6 +3,8 @@ const DEFAULT_SETTINGS = {
   defaultClipboardFormat: 'markdown',
   defaultMessageFilter: 'all',
   defaultLabelLanguage: 'tr',
+  defaultDateStampMode: 'none',
+  defaultSyntaxHighlight: true,
   language: 'tr',
   theme: 'system',
 };
@@ -17,6 +19,8 @@ function readForm() {
     defaultClipboardFormat: document.getElementById('defaultClipboardFormat').value,
     defaultMessageFilter: document.getElementById('defaultMessageFilter').value,
     defaultLabelLanguage: document.getElementById('defaultLabelLanguage').value,
+    defaultDateStampMode: document.getElementById('defaultDateStampMode').value,
+    defaultSyntaxHighlight: document.getElementById('defaultSyntaxHighlight').value === 'true',
     language: document.getElementById('language').value,
     theme: document.getElementById('theme').value,
   };
@@ -27,6 +31,8 @@ function writeForm(settings) {
   document.getElementById('defaultClipboardFormat').value = settings.defaultClipboardFormat;
   document.getElementById('defaultMessageFilter').value = settings.defaultMessageFilter;
   document.getElementById('defaultLabelLanguage').value = settings.defaultLabelLanguage;
+  document.getElementById('defaultDateStampMode').value = settings.defaultDateStampMode;
+  document.getElementById('defaultSyntaxHighlight').value = settings.defaultSyntaxHighlight ? 'true' : 'false';
   document.getElementById('language').value = settings.language;
   document.getElementById('theme').value = settings.theme;
 }

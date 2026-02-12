@@ -38,6 +38,22 @@
         <option value="tr">Turkce (Kullanici/Asistan)</option>
         <option value="en">English (User/Assistant)</option>
       </select>
+      <label id="dateStampLabel" class="format-label">Tarih damgasi:</label>
+      <select id="dateStampModeSelect" class="format-select">
+        <option value="none">Yok</option>
+        <option value="filename">Dosya adinda</option>
+        <option value="content">Icerikte</option>
+        <option value="both">Her ikisi</option>
+      </select>
+      <label id="dateRangeLabel" class="format-label">Zaman araligi:</label>
+      <div class="date-range-row">
+        <input id="dateStartInput" class="format-select" type="date">
+        <input id="dateEndInput" class="format-select" type="date">
+      </div>
+      <label id="syntaxHighlightLabel" class="check-row">
+        <input id="syntaxHighlightToggle" type="checkbox" checked>
+        <span>Kod renklendirme (PDF/HTML)</span>
+      </label>
 
       <div class="tab-row">
         <button id="exportTabBtn" class="tab-btn active" type="button">Export</button>
