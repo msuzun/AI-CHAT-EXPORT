@@ -1,0 +1,169 @@
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #e5e7eb;
+  color: #0f172a;
+}
+
+.overlay {
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+}
+
+.modal {
+  width: 100%;
+  height: 100%;
+  background: #fff;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+}
+
+.header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.pager {
+  padding: 10px 20px;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+}
+
+.hidden {
+  display: none;
+}
+
+.preview {
+  flex: 1;
+  overflow: auto;
+  padding: 20px;
+  background: #f8fafc;
+}
+
+.chat-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 16px;
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.chat-meta {
+  margin-bottom: 12px;
+}
+
+.chat-meta h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.chat-meta p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.msg-block {
+  margin: 1em 0;
+  padding: 1em;
+  background: #f8fafc;
+  border-left: 4px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.msg-block.user {
+  background: #f0f4ff;
+  border-color: #bfdbfe;
+}
+
+.msg-label {
+  font-size: 0.75em;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 0.5em;
+}
+
+.msg-content img {
+  max-width: 100%;
+  height: auto;
+}
+
+.msg-content pre {
+  background: #f1f5f9;
+  padding: 1em;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.plain-preview {
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.status {
+  min-height: 32px;
+  padding: 8px 20px 14px;
+  color: #334155;
+  font-size: 13px;
+}
+
+.btn {
+  border: none;
+  border-radius: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.btn-primary {
+  background: #2563eb;
+  color: #fff;
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: #e5e7eb;
+  color: #111827;
+}

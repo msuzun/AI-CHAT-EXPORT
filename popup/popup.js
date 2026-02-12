@@ -250,6 +250,7 @@ async function resolveDataByScope(tab, siteInfo, scope, progressTextEl, progress
   await ensureContentScript(tab.id);
 
   let data;
+  let previewChats = [];
   let infoText = 'Islem basariyla tamamlandi.';
 
   if (scope === 'all') {
@@ -259,6 +260,7 @@ async function resolveDataByScope(tab, siteInfo, scope, progressTextEl, progress
       throw new Error(`Hicbir sohbet islenemedi.${detail}`);
     }
     data = mergeChatsForExport(result.chats, siteInfo.name);
+    previewChats = result.chats;
     if (result.failed.length > 0) {
       infoText = `${result.chats.length}/${result.total} sohbet islendi.`;
     }
@@ -267,9 +269,10 @@ async function resolveDataByScope(tab, siteInfo, scope, progressTextEl, progress
       progressTextEl.textContent = progressLabel;
     }
     data = await extractCurrentChat(tab.id, siteInfo.id);
+    previewChats = [data];
   }
 
-  return { data, infoText };
+  return { data, infoText, previewChats };
 }
 
 async function copyTextToClipboard(text) {
@@ -295,6 +298,24 @@ function buildClipboardText(format, data, appName) {
   if (format === 'markdown') return buildMarkdownText(data, appName);
   if (format === 'txt') return buildPlainText(data, appName);
   throw new Error('Panoya kopyalama icin desteklenmeyen format.');
+}
+
+async function openExportPreview(payload) {
+  const response = await chrome.runtime.sendMessage({
+    action: 'PREVIEW_SET_PAYLOAD',
+    payload,
+  });
+  if (!response?.ok || !response?.token) {
+    throw new Error(response?.error || 'Export onizleme acilamadi.');
+  }
+
+  await chrome.windows.create({
+    url: chrome.runtime.getURL(`popup/preview.html?token=${encodeURIComponent(response.token)}`),
+    type: 'popup',
+    width: 1200,
+    height: 860,
+    focused: true,
+  });
 }
 
 async function init() {
@@ -346,18 +367,15 @@ async function init() {
           `${FORMATS[format]?.label || format} olusturuluyor...`
         );
 
-        let infoText = 'Kaydetmek istediginiz yeri secin.';
-        if (scope === 'all' && resolved.infoText) {
-          infoText = resolved.infoText.replace('islendi', 'export edildi');
-        }
-
-        await exportToFormat(format, resolved.data, siteInfo.name);
-
-        if (states.success) {
-          states.success.querySelector('.message').textContent = infoText;
-          showState('success');
-        }
-        setTimeout(() => window.close(), 1000);
+        await openExportPreview({
+          format,
+          appName: siteInfo.name,
+          scope,
+          exportData: resolved.data,
+          previewChats: resolved.previewChats,
+          infoText: resolved.infoText,
+        });
+        window.close();
       } catch (err) {
         showError(err?.message || 'Bir hata olustu. Sayfayi yenileyip tekrar deneyin.');
       }

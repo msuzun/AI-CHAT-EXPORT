@@ -26,6 +26,8 @@ const SUPPORTED_PATTERNS = [
   'https://claude.ai/*',
 ];
 
+const PREVIEW_KEY_PREFIX = 'preview_payload_';
+
 function getSiteByUrl(rawUrl) {
   if (!rawUrl) return null;
   let host = '';
@@ -170,6 +172,39 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.action === 'PREVIEW_SET_PAYLOAD') {
+    const token = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    chrome.storage.local
+      .set({ [PREVIEW_KEY_PREFIX + token]: msg.payload || null })
+      .then(() => sendResponse({ ok: true, token }))
+      .catch((err) => sendResponse({ ok: false, error: err?.message || 'Preview payload saklanamadi.' }));
+    return true;
+  }
+
+  if (msg.action === 'PREVIEW_GET_PAYLOAD') {
+    const key = PREVIEW_KEY_PREFIX + msg.token;
+    chrome.storage.local
+      .get(key)
+      .then((obj) => {
+        const payload = obj?.[key];
+        if (!payload) {
+          sendResponse({ ok: false, error: 'Preview verisi bulunamadi.' });
+          return;
+        }
+        sendResponse({ ok: true, payload });
+      })
+      .catch((err) => sendResponse({ ok: false, error: err?.message || 'Preview verisi okunamadi.' }));
+    return true;
+  }
+
+  if (msg.action === 'PREVIEW_CLEAR_PAYLOAD') {
+    chrome.storage.local
+      .remove(PREVIEW_KEY_PREFIX + msg.token)
+      .then(() => sendResponse({ ok: true }))
+      .catch((err) => sendResponse({ ok: false, error: err?.message || 'Preview verisi silinemedi.' }));
+    return true;
+  }
+
   if (msg.action === 'DOWNLOAD_FILE' || msg.action === 'DOWNLOAD_PDF') {
     chrome.downloads
       .download({

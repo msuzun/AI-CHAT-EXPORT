@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Export Onizleme</title>
+  <link rel="stylesheet" href="preview.css">
+</head>
+<body>
+  <div class="overlay">
+    <div class="modal">
+      <div class="header">
+        <div>
+          <h1 id="title">Export Onizleme</h1>
+          <p id="subtitle" class="subtitle"></p>
+        </div>
+        <div class="header-actions">
+          <button id="cancelBtn" class="btn btn-secondary">Iptal</button>
+          <button id="confirmBtn" class="btn btn-primary">Onayla ve Export Et</button>
+        </div>
+      </div>
+
+      <div id="pager" class="pager hidden">
+        <button id="prevBtn" class="btn btn-secondary">Onceki</button>
+        <span id="pageInfo"></span>
+        <button id="nextBtn" class="btn btn-secondary">Sonraki</button>
+      </div>
+
+      <div id="previewContainer" class="preview"></div>
+      <div id="status" class="status"></div>
+    </div>
+  </div>
+
+  <div id="pdfContainer" style="position:fixed;top:0;left:0;width:794px;min-height:1122px;background:#fff;color:#000;opacity:0.01;z-index:-1;overflow:visible;"></div>
+  <script src="pdf-template.js"></script>
+  <script src="exporters.js"></script>
+  <script src="../lib/html2pdf.bundle.min.js"></script>
+  <script src="preview.js"></script>
+</body>
+</html>

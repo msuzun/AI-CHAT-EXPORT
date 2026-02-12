@@ -8,7 +8,8 @@
     "scripting",
     "downloads",
     "contextMenus",
-    "clipboardWrite"
+    "clipboardWrite",
+    "storage"
   ],
   "host_permissions": [
     "https://chat.openai.com/*",
