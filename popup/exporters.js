@@ -60,6 +60,16 @@ function buildBaseHtml(data, appName) {
 
 function exportMarkdown(data, appName) {
   const { blocks, title } = buildBaseHtml(data, appName);
+  const md = buildMarkdownTextFromBlocks(blocks, title);
+  return new Blob([md], { type: 'text/markdown;charset=utf-8' });
+}
+
+function buildMarkdownText(data, appName) {
+  const { blocks, title } = buildBaseHtml(data, appName);
+  return buildMarkdownTextFromBlocks(blocks, title);
+}
+
+function buildMarkdownTextFromBlocks(blocks, title) {
   let md = `# ${title}\n\n`;
   const div = document.createElement('div');
   div.innerHTML = blocks;
@@ -70,7 +80,7 @@ function exportMarkdown(data, appName) {
     md += `## ${label}\n\n`;
     md += htmlToMarkdown(content) + '\n\n';
   });
-  return new Blob([md.trim()], { type: 'text/markdown;charset=utf-8' });
+  return md.trim();
 }
 
 function exportHtml(data, appName) {
@@ -100,6 +110,16 @@ function exportHtml(data, appName) {
 
 function exportPlainText(data, appName) {
   const { blocks, title } = buildBaseHtml(data, appName);
+  const txt = buildPlainTextFromBlocks(blocks, title);
+  return new Blob([txt], { type: 'text/plain;charset=utf-8' });
+}
+
+function buildPlainText(data, appName) {
+  const { blocks, title } = buildBaseHtml(data, appName);
+  return buildPlainTextFromBlocks(blocks, title);
+}
+
+function buildPlainTextFromBlocks(blocks, title) {
   let txt = title + '\n\n' + '='.repeat(title.length) + '\n\n';
   const div = document.createElement('div');
   div.innerHTML = blocks;
@@ -109,7 +129,7 @@ function exportPlainText(data, appName) {
     const content = b.querySelector('.msg-content')?.innerHTML || '';
     txt += `${label}:\n${htmlToText(content)}\n\n`;
   });
-  return new Blob([txt.trim()], { type: 'text/plain;charset=utf-8' });
+  return txt.trim();
 }
 
 function exportWord(data, appName) {

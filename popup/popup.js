@@ -246,6 +246,57 @@ async function collectAllChatsFromLinks(tab, siteInfo, exportingTextEl) {
   return { chats, failed, total: links.length };
 }
 
+async function resolveDataByScope(tab, siteInfo, scope, progressTextEl, progressLabel) {
+  await ensureContentScript(tab.id);
+
+  let data;
+  let infoText = 'Islem basariyla tamamlandi.';
+
+  if (scope === 'all') {
+    const result = await collectAllChatsFromLinks(tab, siteInfo, progressTextEl);
+    if (!result.chats.length) {
+      const detail = result.failed[0]?.reason ? ` Ilk hata: ${result.failed[0].reason}` : '';
+      throw new Error(`Hicbir sohbet islenemedi.${detail}`);
+    }
+    data = mergeChatsForExport(result.chats, siteInfo.name);
+    if (result.failed.length > 0) {
+      infoText = `${result.chats.length}/${result.total} sohbet islendi.`;
+    }
+  } else {
+    if (progressTextEl && progressLabel) {
+      progressTextEl.textContent = progressLabel;
+    }
+    data = await extractCurrentChat(tab.id, siteInfo.id);
+  }
+
+  return { data, infoText };
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', 'true');
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  const ok = document.execCommand('copy');
+  document.body.removeChild(ta);
+  if (!ok) throw new Error('Panoya kopyalama basarisiz oldu.');
+}
+
+function buildClipboardText(format, data, appName) {
+  if (format === 'markdown') return buildMarkdownText(data, appName);
+  if (format === 'txt') return buildPlainText(data, appName);
+  throw new Error('Panoya kopyalama icin desteklenmeyen format.');
+}
+
 async function init() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -287,28 +338,20 @@ async function init() {
 
       showState('exporting');
       try {
-        await ensureContentScript(tab.id);
+        const resolved = await resolveDataByScope(
+          tab,
+          siteInfo,
+          scope,
+          exportingText,
+          `${FORMATS[format]?.label || format} olusturuluyor...`
+        );
 
-        let data;
         let infoText = 'Kaydetmek istediginiz yeri secin.';
-
-        if (scope === 'all') {
-          const result = await collectAllChatsFromLinks(tab, siteInfo, exportingText);
-          if (!result.chats.length) {
-            const detail = result.failed[0]?.reason ? ` İlk hata: ${result.failed[0].reason}` : '';
-            showError(`Hicbir sohbet disa aktarilamadi.${detail}`);
-            return;
-          }
-
-          data = mergeChatsForExport(result.chats, siteInfo.name);
-          if (result.failed.length > 0) {
-            infoText = `${result.chats.length}/${result.total} sohbet export edildi.`;
-          }
-        } else {
-          data = await extractCurrentChat(tab.id, siteInfo.id);
+        if (scope === 'all' && resolved.infoText) {
+          infoText = resolved.infoText.replace('islendi', 'export edildi');
         }
 
-        await exportToFormat(format, data, siteInfo.name);
+        await exportToFormat(format, resolved.data, siteInfo.name);
 
         if (states.success) {
           states.success.querySelector('.message').textContent = infoText;
@@ -317,6 +360,37 @@ async function init() {
         setTimeout(() => window.close(), 1000);
       } catch (err) {
         showError(err?.message || 'Bir hata olustu. Sayfayi yenileyip tekrar deneyin.');
+      }
+    };
+
+    document.getElementById('copyBtn').onclick = async () => {
+      const scope = document.getElementById('scopeSelect').value;
+      const clipboardFormat = document.getElementById('clipboardFormatSelect').value;
+      const exportingText = document.getElementById('exportingText');
+      const formatLabel = clipboardFormat === 'markdown' ? 'Markdown' : 'Plain Text';
+      exportingText.textContent = `${formatLabel} panoya kopyalaniyor...`;
+
+      showState('exporting');
+      try {
+        const resolved = await resolveDataByScope(
+          tab,
+          siteInfo,
+          scope,
+          exportingText,
+          `${formatLabel} panoya kopyalaniyor...`
+        );
+
+        const text = buildClipboardText(clipboardFormat, resolved.data, siteInfo.name);
+        await copyTextToClipboard(text);
+
+        if (states.success) {
+          const extra = scope === 'all' ? ` ${resolved.infoText}` : '';
+          states.success.querySelector('.message').textContent = `Panoya kopyalandi.${extra}`;
+          showState('success');
+        }
+        setTimeout(() => window.close(), 1000);
+      } catch (err) {
+        showError(err?.message || 'Panoya kopyalama basarisiz oldu.');
       }
     };
   } catch (_) {

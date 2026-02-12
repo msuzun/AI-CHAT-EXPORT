@@ -71,6 +71,15 @@ body {
   transition: background 0.15s;
 }
 
+.btn-secondary {
+  background: #e5e7eb;
+  color: #111827;
+}
+
+.btn-secondary:hover {
+  background: #d1d5db;
+}
+
 .btn-primary {
   background: #3b82f6;
   color: white;
@@ -100,4 +109,14 @@ body {
   border-radius: 6px;
   background: #fff;
   cursor: pointer;
+}
+
+.action-row {
+  display: flex;
+  width: 100%;
+  gap: 8px;
+}
+
+.action-row .btn {
+  flex: 1;
 }

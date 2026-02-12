@@ -31,7 +31,15 @@
         <option value="html">HTML (.html)</option>
         <option value="txt">Plain Text (.txt)</option>
       </select>
-      <button id="exportBtn" class="btn btn-primary">Aktar</button>
+      <label class="format-label">Panoya kopyalama:</label>
+      <select id="clipboardFormatSelect" class="format-select">
+        <option value="markdown">Markdown</option>
+        <option value="txt">Plain Text</option>
+      </select>
+      <div class="action-row">
+        <button id="exportBtn" class="btn btn-primary">Aktar</button>
+        <button id="copyBtn" class="btn btn-secondary">Panoya Kopyala</button>
+      </div>
     </div>
     <div id="exporting" class="state">
       <div class="spinner"></div>
