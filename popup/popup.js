@@ -18,6 +18,8 @@ const FORMATS = {
 const DEFAULT_SETTINGS = {
   defaultFormat: 'pdf',
   defaultClipboardFormat: 'markdown',
+  defaultMessageFilter: 'all',
+  defaultLabelLanguage: 'tr',
   language: 'tr',
   theme: 'system',
 };
@@ -30,6 +32,8 @@ const I18N = {
     clipboardTab: 'Panoya Kopyala',
     exportFormatLabel: 'Kaydetme bicimi:',
     clipboardFormatLabel: 'Panoya kopyalama bicimi:',
+    messageFilterLabel: 'Mesaj filtresi:',
+    labelLanguageLabel: 'Etiket dili:',
     exportBtn: 'Aktar',
     copyBtn: 'Panoya Kopyala',
     confirmText: (site) => `${site} icin export kapsamini secin.`,
@@ -42,6 +46,8 @@ const I18N = {
     clipboardTab: 'Copy to Clipboard',
     exportFormatLabel: 'Save format:',
     clipboardFormatLabel: 'Clipboard format:',
+    messageFilterLabel: 'Message filter:',
+    labelLanguageLabel: 'Label language:',
     exportBtn: 'Export',
     copyBtn: 'Copy',
     confirmText: (site) => `Choose export scope for ${site}.`,
@@ -101,6 +107,8 @@ function applyLanguage(language, siteName) {
     ['clipboardTabBtn', dict.clipboardTab],
     ['exportFormatLabel', dict.exportFormatLabel],
     ['clipboardFormatLabel', dict.clipboardFormatLabel],
+    ['messageFilterLabel', dict.messageFilterLabel],
+    ['labelLanguageLabel', dict.labelLanguageLabel],
     ['exportBtn', dict.exportBtn],
     ['copyBtn', dict.copyBtn],
     ['openSettingsBtn', dict.settingsBtn],
@@ -298,7 +306,7 @@ function mergeChatsForExport(chats, appName) {
       sourceUrl ? `<p style="margin:0;color:#64748b;font-size:12px;">${escapeHtml(sourceUrl)}</p>` : '',
     ].join('');
 
-    mergedMessages.push({ role: 'assistant', html: heading });
+    mergedMessages.push({ role: 'meta', html: heading });
     mergedMessages.push(...(chat.messages || []));
   });
 
@@ -397,9 +405,17 @@ async function copyTextToClipboard(text) {
 }
 
 function buildClipboardText(format, data, appName) {
-  if (format === 'markdown') return buildMarkdownText(data, appName);
-  if (format === 'txt') return buildPlainText(data, appName);
+  const options = getCurrentExportOptions();
+  if (format === 'markdown') return buildMarkdownText(data, appName, options);
+  if (format === 'txt') return buildPlainText(data, appName, options);
   throw new Error('Panoya kopyalama icin desteklenmeyen format.');
+}
+
+function getCurrentExportOptions() {
+  return {
+    messageFilter: document.getElementById('messageFilterSelect').value,
+    labelLanguage: document.getElementById('labelLanguageSelect').value,
+  };
 }
 
 async function openExportPreview(payload) {
@@ -461,11 +477,19 @@ async function init() {
 
     const formatSelect = document.getElementById('formatSelect');
     const clipboardFormatSelect = document.getElementById('clipboardFormatSelect');
+    const messageFilterSelect = document.getElementById('messageFilterSelect');
+    const labelLanguageSelect = document.getElementById('labelLanguageSelect');
     if ([...formatSelect.options].some((o) => o.value === currentSettings.defaultFormat)) {
       formatSelect.value = currentSettings.defaultFormat;
     }
     if ([...clipboardFormatSelect.options].some((o) => o.value === currentSettings.defaultClipboardFormat)) {
       clipboardFormatSelect.value = currentSettings.defaultClipboardFormat;
+    }
+    if ([...messageFilterSelect.options].some((o) => o.value === currentSettings.defaultMessageFilter)) {
+      messageFilterSelect.value = currentSettings.defaultMessageFilter;
+    }
+    if ([...labelLanguageSelect.options].some((o) => o.value === currentSettings.defaultLabelLanguage)) {
+      labelLanguageSelect.value = currentSettings.defaultLabelLanguage;
     }
 
     showState('confirm');
@@ -494,6 +518,7 @@ async function init() {
           exportData: resolved.data,
           previewChats: resolved.previewChats,
           infoText: resolved.infoText,
+          exportOptions: getCurrentExportOptions(),
         });
         window.close();
       } catch (err) {

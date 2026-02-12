@@ -1,6 +1,8 @@
 const DEFAULT_SETTINGS = {
   defaultFormat: 'pdf',
   defaultClipboardFormat: 'markdown',
+  defaultMessageFilter: 'all',
+  defaultLabelLanguage: 'tr',
   language: 'tr',
   theme: 'system',
 };
@@ -13,6 +15,8 @@ function readForm() {
   return {
     defaultFormat: document.getElementById('defaultFormat').value,
     defaultClipboardFormat: document.getElementById('defaultClipboardFormat').value,
+    defaultMessageFilter: document.getElementById('defaultMessageFilter').value,
+    defaultLabelLanguage: document.getElementById('defaultLabelLanguage').value,
     language: document.getElementById('language').value,
     theme: document.getElementById('theme').value,
   };
@@ -21,6 +25,8 @@ function readForm() {
 function writeForm(settings) {
   document.getElementById('defaultFormat').value = settings.defaultFormat;
   document.getElementById('defaultClipboardFormat').value = settings.defaultClipboardFormat;
+  document.getElementById('defaultMessageFilter').value = settings.defaultMessageFilter;
+  document.getElementById('defaultLabelLanguage').value = settings.defaultLabelLanguage;
   document.getElementById('language').value = settings.language;
   document.getElementById('theme').value = settings.theme;
 }

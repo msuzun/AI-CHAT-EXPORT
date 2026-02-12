@@ -22,9 +22,9 @@ async function applyThemeFromSettings() {
   } catch (_) {}
 }
 
-async function generatePdf(data, appName) {
+async function generatePdf(data, appName, exportOptions) {
   const container = document.getElementById('pdfContainer');
-  const html = buildPdfHtml(data, appName);
+  const html = buildPdfHtml(data, appName, exportOptions);
   container.innerHTML = html;
   await new Promise((r) => setTimeout(r, 150));
 
@@ -56,28 +56,28 @@ async function downloadFile(blob, filename) {
   if (!response?.ok) throw new Error(response?.error || 'Indirme baslatilamadi');
 }
 
-async function exportToFormat(format, data, appName) {
+async function exportToFormat(format, data, appName, exportOptions) {
   const baseName = safeFilename(data.title);
   switch (format) {
     case 'pdf': {
       if (typeof html2pdf === 'undefined') throw new Error('PDF kutuphanesi yuklenemedi.');
-      const blob = await generatePdf(data, appName);
+      const blob = await generatePdf(data, appName, exportOptions);
       return downloadFile(blob, `${baseName}.pdf`);
     }
     case 'markdown': {
-      const blob = exportMarkdown(data, appName);
+      const blob = exportMarkdown(data, appName, exportOptions);
       return downloadFile(blob, `${baseName}.md`);
     }
     case 'word': {
-      const blob = exportWord(data, appName);
+      const blob = exportWord(data, appName, exportOptions);
       return downloadFile(blob, `${baseName}.doc`);
     }
     case 'html': {
-      const blob = exportHtml(data, appName);
+      const blob = exportHtml(data, appName, exportOptions);
       return downloadFile(blob, `${baseName}.html`);
     }
     case 'txt': {
-      const blob = exportPlainText(data, appName);
+      const blob = exportPlainText(data, appName, exportOptions);
       return downloadFile(blob, `${baseName}.txt`);
     }
     default:
@@ -85,15 +85,15 @@ async function exportToFormat(format, data, appName) {
   }
 }
 
-function renderChatPreview(chat, format, appName) {
+function renderChatPreview(chat, format, appName, exportOptions) {
   if (format === 'markdown') {
-    return `<div class="chat-card"><div class="plain-preview">${htmlEscape(buildMarkdownText(chat, appName))}</div></div>`;
+    return `<div class="chat-card"><div class="plain-preview">${htmlEscape(buildMarkdownText(chat, appName, exportOptions))}</div></div>`;
   }
   if (format === 'txt') {
-    return `<div class="chat-card"><div class="plain-preview">${htmlEscape(buildPlainText(chat, appName))}</div></div>`;
+    return `<div class="chat-card"><div class="plain-preview">${htmlEscape(buildPlainText(chat, appName, exportOptions))}</div></div>`;
   }
 
-  const base = buildBaseHtml(chat, appName);
+  const base = buildBaseHtml(chat, appName, exportOptions);
   const urlLine = chat.sourceUrl ? `<p>${htmlEscape(chat.sourceUrl)}</p>` : '';
   return `<div class="chat-card">
     <div class="chat-meta">
@@ -135,6 +135,7 @@ async function init() {
   }
 
   const payload = response.payload;
+  const exportOptions = payload.exportOptions || { messageFilter: 'all', labelLanguage: 'tr' };
   const previewChats = Array.isArray(payload.previewChats) ? payload.previewChats : [];
   const total = previewChats.length || 1;
   let page = 0;
@@ -155,7 +156,7 @@ async function init() {
 
   function render() {
     const chat = previewChats[page] || payload.exportData;
-    previewEl.innerHTML = renderChatPreview(chat, payload.format, payload.appName);
+    previewEl.innerHTML = renderChatPreview(chat, payload.format, payload.appName, exportOptions);
     updatePager();
   }
 
@@ -184,7 +185,7 @@ async function init() {
     confirmBtn.disabled = true;
     statusEl.textContent = 'Export baslatiliyor...';
     try {
-      await exportToFormat(payload.format, payload.exportData, payload.appName);
+      await exportToFormat(payload.format, payload.exportData, payload.appName, exportOptions);
       statusEl.textContent = `${payload.infoText || 'Export tamamlandi.'} Pencereyi simdi kapatabilirsiniz.`;
       await chrome.runtime.sendMessage({ action: 'PREVIEW_CLEAR_PAYLOAD', token });
     } catch (err) {
