@@ -15,6 +15,40 @@ const FORMATS = {
   txt: { ext: 'txt', label: 'Plain Text' },
 };
 
+const DEFAULT_SETTINGS = {
+  defaultFormat: 'pdf',
+  defaultClipboardFormat: 'markdown',
+  language: 'tr',
+  theme: 'system',
+};
+
+const I18N = {
+  tr: {
+    unsupportedHint: 'ChatGPT, Gemini, DeepSeek veya Claude chat sayfasinda olmalisiniz.',
+    scopeLabel: 'Kapsam:',
+    exportTab: 'Export',
+    clipboardTab: 'Panoya Kopyala',
+    exportFormatLabel: 'Kaydetme bicimi:',
+    clipboardFormatLabel: 'Panoya kopyalama bicimi:',
+    exportBtn: 'Aktar',
+    copyBtn: 'Panoya Kopyala',
+    confirmText: (site) => `${site} icin export kapsamini secin.`,
+    settingsBtn: 'Ayarlar',
+  },
+  en: {
+    unsupportedHint: 'You should be on a ChatGPT, Gemini, DeepSeek, or Claude chat page.',
+    scopeLabel: 'Scope:',
+    exportTab: 'Export',
+    clipboardTab: 'Copy to Clipboard',
+    exportFormatLabel: 'Save format:',
+    clipboardFormatLabel: 'Clipboard format:',
+    exportBtn: 'Export',
+    copyBtn: 'Copy',
+    confirmText: (site) => `Choose export scope for ${site}.`,
+    settingsBtn: 'Settings',
+  },
+};
+
 const states = {
   detecting: document.getElementById('detecting'),
   unsupported: document.getElementById('unsupported'),
@@ -24,6 +58,8 @@ const states = {
   error: document.getElementById('error'),
 };
 
+let currentSettings = { ...DEFAULT_SETTINGS };
+
 function showState(name) {
   Object.values(states).forEach((el) => el.classList.remove('visible'));
   if (states[name]) states[name].classList.add('visible');
@@ -32,6 +68,72 @@ function showState(name) {
 function showError(msg) {
   states.error.querySelector('.message').textContent = msg;
   showState('error');
+}
+
+async function loadSettings() {
+  try {
+    const loaded = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+    currentSettings = { ...DEFAULT_SETTINGS, ...loaded };
+  } catch (_) {
+    currentSettings = { ...DEFAULT_SETTINGS };
+  }
+}
+
+function applyTheme(theme) {
+  const resolved =
+    theme === 'system'
+      ? window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        ? 'dark'
+        : 'light'
+      : theme;
+
+  document.body.classList.toggle('theme-dark', resolved === 'dark');
+}
+
+function applyLanguage(language, siteName) {
+  const dict = I18N[language] || I18N.tr;
+  document.documentElement.lang = language === 'en' ? 'en' : 'tr';
+
+  const map = [
+    ['unsupportedHint', dict.unsupportedHint],
+    ['scopeLabel', dict.scopeLabel],
+    ['exportTabBtn', dict.exportTab],
+    ['clipboardTabBtn', dict.clipboardTab],
+    ['exportFormatLabel', dict.exportFormatLabel],
+    ['clipboardFormatLabel', dict.clipboardFormatLabel],
+    ['exportBtn', dict.exportBtn],
+    ['copyBtn', dict.copyBtn],
+    ['openSettingsBtn', dict.settingsBtn],
+  ];
+
+  map.forEach(([id, text]) => {
+    const el = document.getElementById(id);
+    if (el && typeof text === 'string') el.textContent = text;
+  });
+
+  if (siteName) {
+    const confirmText = document.getElementById('confirmText');
+    if (confirmText) confirmText.textContent = dict.confirmText(siteName);
+  }
+}
+
+function setupTabs() {
+  const exportTabBtn = document.getElementById('exportTabBtn');
+  const clipboardTabBtn = document.getElementById('clipboardTabBtn');
+  const exportPanel = document.getElementById('exportPanel');
+  const clipboardPanel = document.getElementById('clipboardPanel');
+
+  function activate(which) {
+    const exportActive = which === 'export';
+    exportTabBtn.classList.toggle('active', exportActive);
+    clipboardTabBtn.classList.toggle('active', !exportActive);
+    exportPanel.classList.toggle('visible', exportActive);
+    clipboardPanel.classList.toggle('visible', !exportActive);
+  }
+
+  exportTabBtn.onclick = () => activate('export');
+  clipboardTabBtn.onclick = () => activate('clipboard');
+  activate('export');
 }
 
 function safeFilename(name) {
@@ -206,7 +308,7 @@ function mergeChatsForExport(chats, appName) {
   };
 }
 
-async function collectAllChatsFromLinks(tab, siteInfo, exportingTextEl) {
+async function collectAllChatsFromLinks(tab, siteInfo, exportingTextEl, progressBaseLabel) {
   const originalUrl = tab.url;
 
   await ensureContentScript(tab.id);
@@ -224,7 +326,7 @@ async function collectAllChatsFromLinks(tab, siteInfo, exportingTextEl) {
   for (let i = 0; i < links.length; i++) {
     const url = links[i];
     try {
-      exportingTextEl.textContent = `${FORMATS[document.getElementById('formatSelect').value]?.label || 'Dosya'} olusturuluyor... (${i + 1}/${links.length})`;
+      exportingTextEl.textContent = `${progressBaseLabel || 'Dosya'} hazirlaniyor... (${i + 1}/${links.length})`;
 
       await chrome.tabs.update(tab.id, { url });
       await waitForTabComplete(tab.id);
@@ -246,7 +348,7 @@ async function collectAllChatsFromLinks(tab, siteInfo, exportingTextEl) {
   return { chats, failed, total: links.length };
 }
 
-async function resolveDataByScope(tab, siteInfo, scope, progressTextEl, progressLabel) {
+async function resolveDataByScope(tab, siteInfo, scope, progressTextEl, progressLabel, progressBaseLabel) {
   await ensureContentScript(tab.id);
 
   let data;
@@ -254,7 +356,7 @@ async function resolveDataByScope(tab, siteInfo, scope, progressTextEl, progress
   let infoText = 'Islem basariyla tamamlandi.';
 
   if (scope === 'all') {
-    const result = await collectAllChatsFromLinks(tab, siteInfo, progressTextEl);
+    const result = await collectAllChatsFromLinks(tab, siteInfo, progressTextEl, progressBaseLabel);
     if (!result.chats.length) {
       const detail = result.failed[0]?.reason ? ` Ilk hata: ${result.failed[0].reason}` : '';
       throw new Error(`Hicbir sohbet islenemedi.${detail}`);
@@ -320,6 +422,15 @@ async function openExportPreview(payload) {
 
 async function init() {
   try {
+    await loadSettings();
+    applyTheme(currentSettings.theme);
+    applyLanguage(currentSettings.language);
+    setupTabs();
+
+    document.getElementById('openSettingsBtn').onclick = () => {
+      chrome.runtime.openOptionsPage();
+    };
+
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.url) {
       showState('unsupported');
@@ -346,13 +457,21 @@ async function init() {
       return;
     }
 
-    const confirmText = document.getElementById('confirmText');
-    confirmText.textContent = `${siteInfo.name} icin export kapsamini secin.`;
+    applyLanguage(currentSettings.language, siteInfo.name);
+
+    const formatSelect = document.getElementById('formatSelect');
+    const clipboardFormatSelect = document.getElementById('clipboardFormatSelect');
+    if ([...formatSelect.options].some((o) => o.value === currentSettings.defaultFormat)) {
+      formatSelect.value = currentSettings.defaultFormat;
+    }
+    if ([...clipboardFormatSelect.options].some((o) => o.value === currentSettings.defaultClipboardFormat)) {
+      clipboardFormatSelect.value = currentSettings.defaultClipboardFormat;
+    }
 
     showState('confirm');
 
     document.getElementById('exportBtn').onclick = async () => {
-      const format = document.getElementById('formatSelect').value;
+      const format = formatSelect.value;
       const scope = document.getElementById('scopeSelect').value;
       const exportingText = document.getElementById('exportingText');
       exportingText.textContent = `${FORMATS[format]?.label || format} olusturuluyor...`;
@@ -364,7 +483,8 @@ async function init() {
           siteInfo,
           scope,
           exportingText,
-          `${FORMATS[format]?.label || format} olusturuluyor...`
+          `${FORMATS[format]?.label || format} olusturuluyor...`,
+          FORMATS[format]?.label || format
         );
 
         await openExportPreview({
@@ -383,7 +503,7 @@ async function init() {
 
     document.getElementById('copyBtn').onclick = async () => {
       const scope = document.getElementById('scopeSelect').value;
-      const clipboardFormat = document.getElementById('clipboardFormatSelect').value;
+      const clipboardFormat = clipboardFormatSelect.value;
       const exportingText = document.getElementById('exportingText');
       const formatLabel = clipboardFormat === 'markdown' ? 'Markdown' : 'Plain Text';
       exportingText.textContent = `${formatLabel} panoya kopyalaniyor...`;
@@ -395,7 +515,8 @@ async function init() {
           siteInfo,
           scope,
           exportingText,
-          `${formatLabel} panoya kopyalaniyor...`
+          `${formatLabel} panoya kopyalaniyor...`,
+          formatLabel
         );
 
         const text = buildClipboardText(clipboardFormat, resolved.data, siteInfo.name);

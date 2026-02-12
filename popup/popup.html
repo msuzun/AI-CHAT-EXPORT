@@ -8,36 +8,49 @@
 </head>
 <body>
   <div class="container">
+    <div class="topbar">
+      <span class="brand">AI Chat Export</span>
+      <button id="openSettingsBtn" class="link-btn" title="Ayarlar">Ayarlar</button>
+    </div>
     <div id="detecting" class="state visible">
       <div class="spinner"></div>
       <p>Sayfa tespit ediliyor...</p>
     </div>
     <div id="unsupported" class="state">
       <p class="message">Bu sayfa desteklenmiyor.</p>
-      <p class="hint">ChatGPT, Gemini, DeepSeek veya Claude chat sayfasinda olmalisiniz.</p>
+      <p id="unsupportedHint" class="hint">ChatGPT, Gemini, DeepSeek veya Claude chat sayfasinda olmalisiniz.</p>
     </div>
     <div id="confirm" class="state">
       <p class="message" id="confirmText"></p>
-      <label class="format-label">Kapsam:</label>
+      <label id="scopeLabel" class="format-label">Kapsam:</label>
       <select id="scopeSelect" class="format-select">
         <option value="active">Sadece aktif chat</option>
         <option value="all">Tum chatleri export et</option>
       </select>
-      <label class="format-label">Kaydetme bicimi:</label>
-      <select id="formatSelect" class="format-select">
-        <option value="pdf">PDF</option>
-        <option value="markdown">Markdown (.md)</option>
-        <option value="word">Word (.doc)</option>
-        <option value="html">HTML (.html)</option>
-        <option value="txt">Plain Text (.txt)</option>
-      </select>
-      <label class="format-label">Panoya kopyalama:</label>
-      <select id="clipboardFormatSelect" class="format-select">
-        <option value="markdown">Markdown</option>
-        <option value="txt">Plain Text</option>
-      </select>
-      <div class="action-row">
+
+      <div class="tab-row">
+        <button id="exportTabBtn" class="tab-btn active" type="button">Export</button>
+        <button id="clipboardTabBtn" class="tab-btn" type="button">Panoya Kopyala</button>
+      </div>
+
+      <div id="exportPanel" class="panel visible">
+        <label id="exportFormatLabel" class="format-label">Kaydetme bicimi:</label>
+        <select id="formatSelect" class="format-select">
+          <option value="pdf">PDF</option>
+          <option value="markdown">Markdown (.md)</option>
+          <option value="word">Word (.doc)</option>
+          <option value="html">HTML (.html)</option>
+          <option value="txt">Plain Text (.txt)</option>
+        </select>
         <button id="exportBtn" class="btn btn-primary">Aktar</button>
+      </div>
+
+      <div id="clipboardPanel" class="panel">
+        <label id="clipboardFormatLabel" class="format-label">Panoya kopyalama bicimi:</label>
+        <select id="clipboardFormatSelect" class="format-select">
+          <option value="markdown">Markdown</option>
+          <option value="txt">Plain Text</option>
+        </select>
         <button id="copyBtn" class="btn btn-secondary">Panoya Kopyala</button>
       </div>
     </div>

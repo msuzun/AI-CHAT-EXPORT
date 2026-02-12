@@ -8,6 +8,20 @@ function htmlEscape(s) {
   return d.innerHTML;
 }
 
+async function applyThemeFromSettings() {
+  try {
+    const settings = await chrome.storage.sync.get({ theme: 'system' });
+    const theme = settings.theme || 'system';
+    const resolved =
+      theme === 'system'
+        ? window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+          ? 'dark'
+          : 'light'
+        : theme;
+    document.body.classList.toggle('theme-dark', resolved === 'dark');
+  } catch (_) {}
+}
+
 async function generatePdf(data, appName) {
   const container = document.getElementById('pdfContainer');
   const html = buildPdfHtml(data, appName);
@@ -91,6 +105,8 @@ function renderChatPreview(chat, format, appName) {
 }
 
 async function init() {
+  await applyThemeFromSettings();
+
   const titleEl = document.getElementById('title');
   const subtitleEl = document.getElementById('subtitle');
   const pagerEl = document.getElementById('pager');

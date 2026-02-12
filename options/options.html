@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Chat Export Ayarlar</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main class="wrap">
+    <h1>AI Chat Export - Ayarlar</h1>
+    <p class="hint">Eklenti davranisini kendinize gore kisilestirin.</p>
+
+    <label class="label" for="defaultFormat">Varsayilan export formati</label>
+    <select id="defaultFormat" class="input">
+      <option value="pdf">PDF</option>
+      <option value="markdown">Markdown (.md)</option>
+      <option value="word">Word (.doc)</option>
+      <option value="html">HTML (.html)</option>
+      <option value="txt">Plain Text (.txt)</option>
+    </select>
+
+    <label class="label" for="defaultClipboardFormat">Varsayilan panoya kopyalama formati</label>
+    <select id="defaultClipboardFormat" class="input">
+      <option value="markdown">Markdown</option>
+      <option value="txt">Plain Text</option>
+    </select>
+
+    <label class="label" for="language">Dil</label>
+    <select id="language" class="input">
+      <option value="tr">Turkce</option>
+      <option value="en">English</option>
+    </select>
+
+    <label class="label" for="theme">Tema</label>
+    <select id="theme" class="input">
+      <option value="system">Sistem</option>
+      <option value="light">Aydinlik</option>
+      <option value="dark">Koyu</option>
+    </select>
+
+    <div class="actions">
+      <button id="resetBtn" class="btn secondary">Varsayilana Don</button>
+      <button id="saveBtn" class="btn primary">Kaydet</button>
+    </div>
+    <p id="status" class="status"></p>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>
