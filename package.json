@@ -1,0 +1,11 @@
+{
+  "name": "ai-chat-pdf-export",
+  "version": "1.0.0",
+  "description": "Export AI chat conversations to PDF",
+  "scripts": {
+    "prepare": "node -e \"const fs=require('fs');const p='node_modules/html2pdf.js/dist/html2pdf.bundle.min.js';if(fs.existsSync(p)){fs.mkdirSync('lib',{recursive:true});fs.copyFileSync(p,'lib/html2pdf.bundle.min.js');console.log('html2pdf copied');}\""
+  },
+  "devDependencies": {
+    "html2pdf.js": "^0.10.1"
+  }
+}

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Chat PDF Export</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <div id="detecting" class="state visible">
+      <div class="spinner"></div>
+      <p>Sayfa tespit ediliyor...</p>
+    </div>
+    <div id="unsupported" class="state">
+      <p class="message">Bu sayfa desteklenmiyor.</p>
+      <p class="hint">ChatGPT, Gemini, DeepSeek veya Claude chat sayfasında olmalısınız.</p>
+    </div>
+    <div id="confirm" class="state">
+      <p class="message" id="confirmText"></p>
+      <button id="exportBtn" class="btn btn-primary">PDF'e Aktar</button>
+    </div>
+    <div id="exporting" class="state">
+      <div class="spinner"></div>
+      <p>PDF oluşturuluyor...</p>
+      <p class="hint">Kaydetmek istediğiniz konumu seçeceksiniz.</p>
+    </div>
+    <div id="success" class="state">
+      <p class="message" style="color:#059669;">Kaydetmek istediğiniz yeri seçin.</p>
+    </div>
+    <div id="error" class="state">
+      <p class="message error"></p>
+    </div>
+  </div>
+  <div id="pdfContainer" style="position:fixed;top:0;left:0;width:794px;min-height:1122px;background:#fff;color:#000;opacity:0.01;z-index:-1;overflow:visible;"></div>
+  <script src="pdf-template.js"></script>
+  <script src="../lib/html2pdf.bundle.min.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
