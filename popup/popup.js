@@ -7,6 +7,14 @@ const SITES = {
   'claude.ai': { name: 'Claude', id: 'claude' },
 };
 
+const FORMATS = {
+  pdf: { ext: 'pdf', label: 'PDF' },
+  markdown: { ext: 'md', label: 'Markdown' },
+  word: { ext: 'doc', label: 'Word' },
+  html: { ext: 'html', label: 'HTML' },
+  txt: { ext: 'txt', label: 'Plain Text' },
+};
+
 const states = {
   detecting: document.getElementById('detecting'),
   unsupported: document.getElementById('unsupported'),
@@ -50,7 +58,7 @@ async function generatePdf(data, appName) {
   return html2pdf().set(opt).from(target).outputPdf('blob');
 }
 
-async function downloadPdf(blob, filename) {
+async function downloadFile(blob, filename) {
   const dataUrl = await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
@@ -58,11 +66,40 @@ async function downloadPdf(blob, filename) {
     reader.readAsDataURL(blob);
   });
   const response = await chrome.runtime.sendMessage({
-    action: 'DOWNLOAD_PDF',
+    action: 'DOWNLOAD_FILE',
     dataUrl,
     filename,
   });
   if (!response?.ok) throw new Error(response?.error || 'İndirme başlatılamadı');
+}
+
+async function exportToFormat(format, data, appName) {
+  const baseName = safeFilename(data.title);
+  switch (format) {
+    case 'pdf': {
+      if (typeof html2pdf === 'undefined') throw new Error('PDF kütüphanesi yüklenemedi.');
+      const blob = await generatePdf(data, appName);
+      return downloadFile(blob, `${baseName}.pdf`);
+    }
+    case 'markdown': {
+      const blob = exportMarkdown(data, appName);
+      return downloadFile(blob, `${baseName}.md`);
+    }
+    case 'word': {
+      const blob = exportWord(data, appName);
+      return downloadFile(blob, `${baseName}.doc`);
+    }
+    case 'html': {
+      const blob = exportHtml(data, appName);
+      return downloadFile(blob, `${baseName}.html`);
+    }
+    case 'txt': {
+      const blob = exportPlainText(data, appName);
+      return downloadFile(blob, `${baseName}.txt`);
+    }
+    default:
+      throw new Error('Desteklenmeyen format.');
+  }
 }
 
 async function init() {
@@ -94,11 +131,15 @@ async function init() {
     }
 
     const confirmText = document.getElementById('confirmText');
-    confirmText.textContent = `${siteInfo.name} için aktif chat'i PDF'e aktarmak ister misiniz?`;
+    confirmText.textContent = `${siteInfo.name} için aktif chat'i aktarmak ister misiniz?`;
 
     showState('confirm');
 
     document.getElementById('exportBtn').onclick = async () => {
+      const format = document.getElementById('formatSelect').value;
+      const exportingText = document.getElementById('exportingText');
+      exportingText.textContent = `${FORMATS[format]?.label || format} oluşturuluyor...`;
+
       showState('exporting');
       try {
         try {
@@ -106,9 +147,8 @@ async function init() {
             target: { tabId: tab.id },
             files: ['content/content.js'],
           });
-        } catch (e) {
-          // Zaten enjekte edilmişse hata verebilir, devam et
-        }
+        } catch (e) {}
+
         const response = await chrome.tabs.sendMessage(tab.id, {
           action: 'EXTRACT_CHAT',
           siteId: siteInfo.id,
@@ -120,14 +160,7 @@ async function init() {
         }
 
         const { data } = response;
-        if (typeof html2pdf === 'undefined') {
-          showError('PDF kütüphanesi yüklenemedi. npm install && npm run prepare çalıştırın.');
-          return;
-        }
-
-        const blob = await generatePdf(data, siteInfo.name);
-        const filename = `${safeFilename(data.title)}.pdf`;
-        await downloadPdf(blob, filename);
+        await exportToFormat(format, data, siteInfo.name);
 
         if (states.success) {
           states.success.querySelector('.message').textContent = 'Kaydetmek istediğiniz yeri seçin.';

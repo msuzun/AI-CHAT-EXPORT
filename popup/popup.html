@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI Chat PDF Export</title>
+  <title>AI Chat Export</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
@@ -18,11 +18,19 @@
     </div>
     <div id="confirm" class="state">
       <p class="message" id="confirmText"></p>
-      <button id="exportBtn" class="btn btn-primary">PDF'e Aktar</button>
+      <label class="format-label">Kaydetme biçimi:</label>
+      <select id="formatSelect" class="format-select">
+        <option value="pdf">PDF</option>
+        <option value="markdown">Markdown (.md)</option>
+        <option value="word">Word (.doc)</option>
+        <option value="html">HTML (.html)</option>
+        <option value="txt">Plain Text (.txt)</option>
+      </select>
+      <button id="exportBtn" class="btn btn-primary">Aktar</button>
     </div>
     <div id="exporting" class="state">
       <div class="spinner"></div>
-      <p>PDF oluşturuluyor...</p>
+      <p id="exportingText">Oluşturuluyor...</p>
       <p class="hint">Kaydetmek istediğiniz konumu seçeceksiniz.</p>
     </div>
     <div id="success" class="state">
@@ -34,6 +42,7 @@
   </div>
   <div id="pdfContainer" style="position:fixed;top:0;left:0;width:794px;min-height:1122px;background:#fff;color:#000;opacity:0.01;z-index:-1;overflow:visible;"></div>
   <script src="pdf-template.js"></script>
+  <script src="exporters.js"></script>
   <script src="../lib/html2pdf.bundle.min.js"></script>
   <script src="popup.js"></script>
 </body>
