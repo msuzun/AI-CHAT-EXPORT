@@ -2,7 +2,7 @@
   async function imageToBase64(url) {
     if (!url || url.startsWith('data:')) return url;
     try {
-      const res = await fetch(url, { mode: 'cors' });
+      const res = await fetch(url, { mode: 'cors', credentials: 'include' });
       const blob = await res.blob();
       return await new Promise((resolve, reject) => {
         const r = new FileReader();
@@ -15,17 +15,194 @@
     }
   }
 
+  async function imageElementToBase64(img) {
+    if (!img) return '';
+    const src = img.currentSrc || img.getAttribute('src') || img.src || '';
+    if (!src) return '';
+    if (src.startsWith('data:')) return src;
+
+    try {
+      const base64 = await imageToBase64(src);
+      if (base64 && base64.startsWith('data:')) return base64;
+    } catch (_) {}
+
+    try {
+      if (!img.complete) {
+        await new Promise((resolve) => {
+          const done = () => resolve();
+          img.addEventListener('load', done, { once: true });
+          img.addEventListener('error', done, { once: true });
+          setTimeout(done, 2000);
+        });
+      }
+      const w = img.naturalWidth || img.width;
+      const h = img.naturalHeight || img.height;
+      if (w > 0 && h > 0) {
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, w, h);
+          return canvas.toDataURL('image/png');
+        }
+      }
+    } catch (_) {}
+
+    return src;
+  }
+
+  function hasMeaningfulNodeContent(node) {
+    if (!node) return false;
+    const clone = node.cloneNode(true);
+    clone.querySelectorAll?.('button, nav, form, script, style, svg, [aria-hidden="true"]').forEach((el) => el.remove());
+    const plain = (clone.textContent || '').replace(/\s+/g, ' ').trim();
+    const roleOnly = /^(kullanici|asistan|assistant|user|you|chatgpt)$/i.test(plain);
+    if (plain && !roleOnly) return true;
+    return !!clone.querySelector?.('img, picture, video, canvas, math, table, pre, code, blockquote, ul, ol, li');
+  }
+
+  function hasMeaningfulHtmlContent(html) {
+    const div = document.createElement('div');
+    div.innerHTML = html || '';
+    return hasMeaningfulNodeContent(div);
+  }
+
+  function sanitizeExtractedHtml(html) {
+    const div = document.createElement('div');
+    div.innerHTML = html || '';
+    div.querySelectorAll?.(
+      [
+        'script',
+        'style',
+        'svg',
+        '[aria-hidden="true"]',
+        '[class*="skeleton"]',
+        '[class*="loading"]',
+        '[class*="spinner"]',
+        '[class*="typing"]',
+        '[data-state="loading"]',
+        '[class*="sticky"]',
+        '[class*="fixed"]',
+        '[class*="absolute"]',
+        '[class*="min-h-screen"]',
+        '[class*="h-screen"]',
+      ].join(',')
+    ).forEach((el) => el.remove());
+    return div.innerHTML;
+  }
+
+  function inferRoleFromNode(node) {
+    if (!node) return 'assistant';
+    const holder = node.closest?.('[data-message-author-role], [data-role], article, [class*="message"], [class*="Message"]') || node.parentElement;
+    const explicit =
+      holder?.getAttribute?.('data-message-author-role') ||
+      holder?.getAttribute?.('data-role') ||
+      holder?.querySelector?.('[data-message-author-role]')?.getAttribute?.('data-message-author-role');
+    if (explicit === 'user') return 'user';
+    const cls = `${holder?.className || ''}`.toLowerCase();
+    if (cls.includes('user')) return 'user';
+    return 'assistant';
+  }
+
+  function scoreMessages(messages) {
+    const list = Array.isArray(messages) ? messages : [];
+    let textLen = 0;
+    let richCount = 0;
+    for (const m of list) {
+      const div = document.createElement('div');
+      div.innerHTML = m?.html || '';
+      const txt = (div.textContent || '').replace(/\s+/g, ' ').trim();
+      textLen += txt.length;
+      if (div.querySelector('img, picture, video, canvas, math, table, pre, code, ul, ol, li, blockquote')) {
+        richCount += 1;
+      }
+    }
+    return { count: list.length, textLen, richCount, total: textLen + richCount * 80 + list.length * 20 };
+  }
+
+  function isWeakExtraction(messages) {
+    const s = scoreMessages(messages);
+    if (!s.count) return true;
+    if (s.count === 1 && s.textLen < 40 && s.richCount === 0) return true;
+    return s.total < 90;
+  }
+
+  async function extractChatGPTFallback() {
+    const candidates = Array.from(
+      document.querySelectorAll(
+        [
+          '[data-message-content]',
+          '[data-testid*="conversation-turn-content"]',
+          'article [class*="markdown"]',
+          'article .markdown',
+          '[class*="ConversationItem"] [class*="markdown"]',
+          '[class*="prose"]',
+        ].join(',')
+      )
+    );
+
+    const out = [];
+    const seen = new Set();
+
+    for (const content of candidates) {
+      if (!hasMeaningfulNodeContent(content)) continue;
+      const rawHtml = await serializeWithImages(content);
+      const html = sanitizeExtractedHtml(rawHtml);
+      if (!hasMeaningfulHtmlContent(html)) continue;
+
+      const key = ((content.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 240) + '|' + html.length).toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      out.push({
+        role: inferRoleFromNode(content),
+        html,
+        timestamp: extractTimestampFromElement(content) || extractTimestampFromElement(content.parentElement),
+      });
+    }
+
+    // DeepSeek'teki yaklasima benzer: roller tek tipe cokmus ise sirali dagit.
+    const roles = out.map((m) => m.role);
+    const allSame = roles.length > 1 && roles.every((r) => r === roles[0]);
+    if (allSame) {
+      let expectedRole = 'user';
+      out.forEach((m) => {
+        m.role = expectedRole;
+        expectedRole = expectedRole === 'user' ? 'assistant' : 'user';
+      });
+    }
+
+    return out;
+  }
+
+  function pickFirstMeaningful(root, selectors) {
+    if (!root) return null;
+    for (const sel of selectors) {
+      const el = root.querySelector?.(sel);
+      if (el && hasMeaningfulNodeContent(el)) return el;
+    }
+    return null;
+  }
+
   async function cloneWithBase64Images(node) {
     const clone = node.cloneNode(true);
-    const imgs = clone.querySelectorAll('img');
-    for (const img of imgs) {
-      const src = img.getAttribute('src');
-      if (src) {
-        try {
-          const base64 = await imageToBase64(src);
-          img.setAttribute('src', base64);
-        } catch (_) {}
-      }
+    const sourceImgs = Array.from(node.querySelectorAll('img'));
+    const cloneImgs = Array.from(clone.querySelectorAll('img'));
+    const count = Math.min(sourceImgs.length, cloneImgs.length);
+
+    for (let i = 0; i < count; i++) {
+      const srcImg = sourceImgs[i];
+      const cloneImg = cloneImgs[i];
+      try {
+        const base64 = await imageElementToBase64(srcImg);
+        if (base64) {
+          cloneImg.setAttribute('src', base64);
+          cloneImg.removeAttribute('srcset');
+          cloneImg.removeAttribute('data-src');
+          cloneImg.removeAttribute('data-original');
+        }
+      } catch (_) {}
     }
     return clone;
   }
@@ -89,9 +266,8 @@
 
   async function extractChatGPT() {
     const messages = [];
-    const items =
-      document.querySelectorAll('[data-message-author-role]') ||
-      document.querySelectorAll('article');
+    const items = Array.from(document.querySelectorAll('[data-message-author-role]'));
+    const articleItems = Array.from(document.querySelectorAll('article'));
 
     const fallbackItems = document.querySelectorAll('[class*="markdown"]')?.length
       ? Array.from(document.querySelectorAll('[class*="ConversationItem"]')).filter((el) =>
@@ -99,8 +275,11 @@
         )
       : [];
 
-    const messageBlocks =
-      items?.length > 0 ? items : document.querySelectorAll('article') || fallbackItems;
+    const messageBlocks = items.length > 0
+      ? items
+      : articleItems.length > 0
+        ? articleItems
+        : fallbackItems;
 
     if (messageBlocks.length === 0) {
       const prose = document.querySelector(
@@ -121,23 +300,37 @@
         block.getAttribute?.('data-message-author-role') ||
         block.querySelector?.('[data-message-author-role]')?.getAttribute?.('data-message-author-role') ||
         (block.querySelector?.('[class*="user"]') ? 'user' : 'assistant');
-      const content =
-        block.querySelector?.('[class*="markdown"]') ||
-        block.querySelector?.('.markdown') ||
-        block.querySelector?.('[class*="prose"]') ||
-        block.querySelector?.('[class*="text"]') ||
-        block;
-      if (content && content.textContent?.trim()) {
-        const html = await serializeWithImages(content);
-        messages.push({
-          role: role === 'user' ? 'user' : 'assistant',
-          html,
-          timestamp: extractTimestampFromElement(block) || extractTimestampFromElement(content),
-        });
+      const content = pickFirstMeaningful(block, [
+        '[data-message-content]',
+        '[data-testid="user-message"]',
+        '[data-testid*="conversation-turn-content"]',
+        '[class*="markdown"]',
+        '.markdown',
+        '[class*="prose"]',
+        '.whitespace-pre-wrap',
+        '[class*="text"]',
+      ]);
+      if (content) {
+        const rawHtml = await serializeWithImages(content);
+        const html = sanitizeExtractedHtml(rawHtml);
+        if (hasMeaningfulHtmlContent(html)) {
+          messages.push({
+            role: role === 'user' ? 'user' : 'assistant',
+            html,
+            timestamp: extractTimestampFromElement(block) || extractTimestampFromElement(content),
+          });
+        }
       }
     }
 
-    return { messages, title: getTitle() };
+    let meaningful = messages.filter((m) => hasMeaningfulHtmlContent(m.html || ''));
+    if (!meaningful.length || isWeakExtraction(meaningful)) {
+      const fallback = await extractChatGPTFallback();
+      if (scoreMessages(fallback).total > scoreMessages(meaningful).total) {
+        meaningful = fallback;
+      }
+    }
+    return { messages: meaningful, title: getTitle() };
 
     function getTitle() {
       return (
@@ -195,7 +388,7 @@
         block.querySelector?.('[class*="text"]') ||
         block.querySelector?.('.markdown') ||
         block;
-      if (content && content.textContent?.trim()) {
+      if (content && hasMeaningfulNodeContent(content)) {
         const html = await serializeWithImages(content);
         messages.push({
           role: isUser ? 'user' : 'assistant',
@@ -267,7 +460,7 @@
       const content = document.querySelector(
         '[class*="markdown"], [class*="content"], .prose, [class*="text"]'
       );
-      if (content && content.textContent?.trim()) {
+      if (content && hasMeaningfulNodeContent(content)) {
         const html = await serializeWithImages(content);
         return {
           messages: [{ role: 'assistant', html, timestamp: extractTimestampFromElement(content) }],
@@ -290,7 +483,7 @@
         block.querySelector?.('.markdown') ||
         block.querySelector?.('.prose') ||
         block;
-      if (content && content.textContent?.trim()) {
+      if (content && hasMeaningfulNodeContent(content)) {
         const hasMarkdown = !!block.querySelector?.('.ds-markdown, [class*="markdown"], pre, code, ol, ul, h1, h2, h3');
         const html = await serializeWithImages(content);
         messages.push({
@@ -370,7 +563,7 @@
         block.querySelector?.('[class*="prose"]') ||
         block.querySelector?.('.markdown') ||
         block;
-      if (content && content.textContent?.trim()) {
+      if (content && hasMeaningfulNodeContent(content)) {
         const html = await serializeWithImages(content);
         messages.push({
           role: isUser ? 'user' : 'assistant',
@@ -398,10 +591,78 @@
     claude: extractClaude,
   };
 
+  const PLATFORMS = {
+    chatgpt: { id: 'chatgpt', name: 'ChatGPT', chatPathMatchers: ['/c/'] },
+    gemini: { id: 'gemini', name: 'Gemini', chatPathMatchers: ['/app/'] },
+    deepseek: { id: 'deepseek', name: 'DeepSeek', chatPathMatchers: ['/chat/', '/c/'] },
+    claude: { id: 'claude', name: 'Claude', chatPathMatchers: ['/chat/'] },
+  };
+
+  function getPlatformFromUrl(url) {
+    if (!url || typeof url !== 'string') return null;
+    let host;
+    try {
+      host = (url.startsWith('http') ? new URL(url) : new URL(url, location.origin)).hostname.toLowerCase();
+    } catch (_) {
+      return null;
+    }
+    if (host === 'chat.openai.com' || host === 'chatgpt.com') return { id: 'chatgpt', name: 'ChatGPT' };
+    if (host === 'gemini.google.com') return { id: 'gemini', name: 'Gemini' };
+    if (host.includes('deepseek')) return { id: 'deepseek', name: 'DeepSeek' };
+    if (host === 'claude.ai') return { id: 'claude', name: 'Claude' };
+    return null;
+  }
+
+  function getChatPathMatchers(platformId) {
+    return PLATFORMS[platformId]?.chatPathMatchers || ['/chat/', '/c/'];
+  }
+
+  class ContentExtractor {
+    constructor() {
+      this._platform = null;
+      this._adapter = null;
+    }
+
+    init(currentUrl) {
+      this._platform = getPlatformFromUrl(currentUrl || location.href);
+      this._adapter = null;
+      return this._platform;
+    }
+
+    createAdapter(platformId) {
+      const fn = extractors[platformId];
+      if (fn) {
+        return {
+          async extract() {
+            return fn();
+          },
+        };
+      }
+      return null;
+    }
+
+    async extractChat(platformId) {
+      const id = platformId || this._platform?.id;
+      if (!id) {
+        throw new Error('Desteklenmeyen platform. Lutfen ChatGPT, Gemini, DeepSeek veya Claude chat sayfasinda oldugunuzdan emin olun.');
+      }
+      const adapter = this.createAdapter(id);
+      if (!adapter) {
+        throw new Error(`Desteklenmeyen platform: ${id}`);
+      }
+      const result = await adapter.extract();
+      if (!result || !result.messages) {
+        throw new Error('Bu sayfada chat icerigi bulunamadi.');
+      }
+      return result;
+    }
+  }
+
+  const contentExtractor = new ContentExtractor();
+  contentExtractor.init(location.href);
+
   function extractChat(siteId) {
-    const fn = extractors[siteId];
-    if (!fn) return null;
-    return fn();
+    return contentExtractor.extractChat(siteId);
   }
 
   function normalizeUrl(href) {
@@ -412,15 +673,23 @@
     }
   }
 
-  function collectChatLinks(siteId) {
-    const pathMatchers = {
-      chatgpt: ['/c/'],
-      gemini: ['/app/'],
-      deepseek: ['/chat/', '/c/'],
-      claude: ['/chat/'],
-    };
+  function canonicalizeChatUrl(siteId, rawUrl) {
+    try {
+      const u = new URL(rawUrl);
+      if (siteId === 'chatgpt' || siteId === 'deepseek' || siteId === 'claude') {
+        u.hash = '';
+        u.search = '';
+      } else {
+        u.hash = '';
+      }
+      return u.href;
+    } catch {
+      return rawUrl;
+    }
+  }
 
-    const matchers = pathMatchers[siteId] || ['/chat/', '/c/'];
+  function collectChatLinks(siteId) {
+    const matchers = getChatPathMatchers(siteId);
     const links = new Set();
 
     const anchors = Array.from(document.querySelectorAll('a[href]'));
@@ -434,14 +703,14 @@
         const parsed = new URL(url);
         if (parsed.origin !== location.origin) continue;
         if (!matchers.some((m) => parsed.pathname.includes(m))) continue;
-        links.add(parsed.href);
+        links.add(canonicalizeChatUrl(siteId, parsed.href));
       } catch (_) {}
     }
 
     try {
       const current = new URL(location.href);
       if (matchers.some((m) => current.pathname.includes(m))) {
-        links.add(current.href);
+        links.add(canonicalizeChatUrl(siteId, current.href));
       }
     } catch (_) {}
 
@@ -455,7 +724,7 @@
           if (!data || !data.messages?.length) {
             sendResponse({ error: 'Bu sayfada chat icerigi bulunamadi.' });
           } else {
-            sendResponse({ data });
+            sendResponse({ data: { ...data, currentUrl: location.href } });
           }
         })
         .catch((err) => {

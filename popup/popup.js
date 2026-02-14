@@ -218,6 +218,17 @@ function uniqueUrls(urls) {
   return out;
 }
 
+function normalizeChatUrlForCompare(rawUrl) {
+  try {
+    const u = new URL(rawUrl);
+    u.hash = '';
+    u.search = '';
+    return u.href;
+  } catch (_) {
+    return String(rawUrl || '').trim();
+  }
+}
+
 function isLikelyChatUrl(siteId, rawUrl) {
   try {
     const u = new URL(rawUrl);
@@ -234,21 +245,34 @@ function isLikelyChatUrl(siteId, rawUrl) {
 
 async function generatePdf(data, appName, exportOptions) {
   const container = document.getElementById('pdfContainer');
+  if (!container) throw new Error('PDF konteyneri bulunamadi.');
   const html = buildPdfHtml(data, appName, exportOptions);
   container.innerHTML = html;
 
-  await new Promise((r) => setTimeout(r, 150));
+  await new Promise((r) => requestAnimationFrame(r));
+  await new Promise((r) => setTimeout(r, 250));
+
+  const wrapper = container.querySelector('.pdf-wrapper');
+  const target = wrapper || container;
+  const clone = target.cloneNode(true);
+  clone.id = '';
+  clone.style.cssText =
+    'position:fixed;left:0;top:0;width:794px;min-height:1122px;background:#fff;color:#1e293b;opacity:1;z-index:2147483647;pointer-events:none;visibility:visible;';
+  document.body.appendChild(clone);
 
   const opt = {
     margin: [12, 10, 18, 10],
     image: { type: 'jpeg', quality: 0.95 },
     html2canvas: { scale: 2, useCORS: true, letterRendering: true, logging: false },
     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-    pagebreak: { mode: ['css', 'legacy'], avoid: ['.msg-block'] },
+    pagebreak: { mode: ['css', 'legacy'], avoid: ['.msg-block', '.msg-content pre', '.msg-content table', '.msg-content blockquote'] },
   };
 
-  const target = container.querySelector('.pdf-wrapper') || container;
-  return html2pdf().set(opt).from(target).outputPdf('blob');
+  try {
+    return await html2pdf().set(opt).from(clone).outputPdf('blob');
+  } finally {
+    if (clone.parentNode) clone.parentNode.removeChild(clone);
+  }
 }
 
 async function downloadFile(blob, filename) {
@@ -326,23 +350,57 @@ async function ensureContentScript(tabId) {
   } catch (_) {}
 }
 
-async function extractCurrentChat(tabId, siteId) {
+function hasRenderableMessageContent(msg) {
+  if (!msg || msg.role === 'meta') return false;
+  const html = String(msg.html || '');
+  if (!html.trim()) return false;
+
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  const plain = (div.textContent || '').replace(/\s+/g, ' ').trim();
+  const roleOnly = /^(kullanici|asistan|assistant|user|you|chatgpt)$/i.test(plain);
+  if (plain && !roleOnly) return true;
+  if (div.querySelector('img, picture, video, canvas, math, table, pre, code, ul, ol, li, blockquote')) return true;
+  return false;
+}
+
+function hasRenderableChatData(data) {
+  const messages = Array.isArray(data?.messages) ? data.messages : [];
+  return messages.some((m) => hasRenderableMessageContent(m));
+}
+
+function hasUserPrompt(data) {
+  const messages = Array.isArray(data?.messages) ? data.messages : [];
+  return messages.some((m) => m?.role === 'user' && hasRenderableMessageContent(m));
+}
+
+async function extractCurrentChat(tabId, siteId, expectedUrl = '') {
   let lastError = 'Bu sayfada chat icerigi bulunamadi.';
-  for (let i = 0; i < 8; i++) {
+  const expected = expectedUrl ? normalizeChatUrlForCompare(expectedUrl) : '';
+  for (let i = 0; i < 16; i++) {
     try {
       await ensureContentScript(tabId);
       const response = await chrome.tabs.sendMessage(tabId, {
         action: 'EXTRACT_CHAT',
         siteId,
       });
-      if (!response?.error && response?.data?.messages?.length) {
+      const currentFromExtractor = normalizeChatUrlForCompare(response?.data?.currentUrl || '');
+      const urlMatched = !expected || (currentFromExtractor && currentFromExtractor === expected);
+      const contentReady = !response?.error && response?.data?.messages?.length && hasRenderableChatData(response.data);
+      const userPromptReady = siteId === 'deepseek' || hasUserPrompt(response?.data);
+      if (!urlMatched) {
+        lastError = 'Sohbet URL henuz degismedi, tekrar deneniyor.';
+      } else if (!contentReady) {
+        lastError = response?.error || 'Sohbet icerigi henuz yuklenmedi, tekrar deneniyor.';
+      } else if (!userPromptReady) {
+        lastError = 'Kullanici promptu henuz yuklenmedi, tekrar deneniyor.';
+      } else {
         return response.data;
       }
-      lastError = response?.error || lastError;
     } catch (err) {
       lastError = err?.message || lastError;
     }
-    await new Promise((r) => setTimeout(r, 700));
+    await new Promise((r) => setTimeout(r, 800));
   }
   throw new Error(lastError);
 }
@@ -364,6 +422,18 @@ async function waitForTabComplete(tabId, timeoutMs = 20000) {
     await new Promise((r) => setTimeout(r, 250));
   }
   throw new Error('Sayfa yuklenmesi zaman asimina ugradi.');
+}
+
+async function waitForTabUrl(tabId, expectedUrl, timeoutMs = 20000) {
+  const expected = normalizeChatUrlForCompare(expectedUrl);
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const t = await chrome.tabs.get(tabId);
+    const current = normalizeChatUrlForCompare(t?.url || '');
+    if (current && current === expected) return t;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error('Hedef sohbet URL yuklenemedi.');
 }
 
 function mergeChatsForExport(chats, appName) {
@@ -456,9 +526,10 @@ async function collectAllChatsFromLinks(tab, siteInfo, exportingTextEl, progress
 
       await chrome.tabs.update(tab.id, { url });
       await waitForTabComplete(tab.id);
-      await new Promise((r) => setTimeout(r, 900));
+      await waitForTabUrl(tab.id, url);
+      await new Promise((r) => setTimeout(r, 1200));
 
-      const data = await extractCurrentChat(tab.id, siteInfo.id);
+      const data = await extractCurrentChat(tab.id, siteInfo.id, url);
       chats.push({ ...data, sourceUrl: url });
     } catch (err) {
       failed.push({ url, reason: err?.message || 'Bilinmeyen hata' });
@@ -680,8 +751,9 @@ async function collectSelectedChats(tab, siteInfo, selectedIndices, progressEl, 
       if (item.href) {
         await chrome.tabs.update(tab.id, { url: item.href });
         await waitForTabComplete(tab.id);
-        await new Promise((r) => setTimeout(r, 900));
-        const data = await extractCurrentChat(tab.id, siteInfo.id);
+        await waitForTabUrl(tab.id, item.href);
+        await new Promise((r) => setTimeout(r, 1200));
+        const data = await extractCurrentChat(tab.id, siteInfo.id, item.href);
         chats.push({ ...data, sourceUrl: item.href });
       } else {
         await ensureContentScript(tab.id);

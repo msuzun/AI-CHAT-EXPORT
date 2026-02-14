@@ -56,6 +56,25 @@ function htmlEscape(s) {
   return d.innerHTML;
 }
 
+/** Batch export icin previewChats'tan exportData olusturur. Storage kesilmesine karsi guvenlik. */
+function mergeChatsForExport(chats, appName) {
+  const mergedMessages = [];
+  (chats || []).forEach((chat, idx) => {
+    const title = chat?.title || `Sohbet ${idx + 1}`;
+    const sourceUrl = chat?.sourceUrl || '';
+    const heading = [
+      `<h2 style="margin:0 0 6px 0;">${idx + 1}. ${htmlEscape(title)}</h2>`,
+      sourceUrl ? `<p style="margin:0;color:#64748b;font-size:12px;">${htmlEscape(sourceUrl)}</p>` : '',
+    ].join('');
+    mergedMessages.push({ role: 'meta', html: heading });
+    mergedMessages.push(...(chat.messages || []));
+  });
+  return {
+    title: `${appName} Tum Sohbetler (${(chats || []).length})`,
+    messages: mergedMessages,
+  };
+}
+
 async function applyThemeFromSettings() {
   try {
     const settings = await chrome.storage.sync.get({ theme: 'system' });
@@ -71,21 +90,49 @@ async function applyThemeFromSettings() {
 }
 
 async function generatePdf(data, appName, exportOptions) {
-  const container = document.getElementById('pdfContainer');
+  if (!data?.messages?.length) {
+    throw new Error('Export icin mesaj bulunamadi.');
+  }
   const html = buildPdfHtml(data, appName, exportOptions);
-  container.innerHTML = html;
-  await new Promise((r) => setTimeout(r, 150));
+  const fullDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;background:#fff;">${html}</body></html>`;
+
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;min-height:1122px;border:0;';
+  iframe.srcdoc = fullDoc;
+  document.body.appendChild(iframe);
+
+  await new Promise((r) => {
+    iframe.onload = r;
+    iframe.onerror = r;
+    setTimeout(r, 800);
+  });
+
+  const doc = iframe.contentDocument;
+  const target = doc?.querySelector('.pdf-wrapper') || doc?.body;
+  if (!target) {
+    iframe.remove();
+    throw new Error('PDF icerigi yuklenemedi.');
+  }
 
   const opt = {
     margin: [12, 10, 18, 10],
     image: { type: 'jpeg', quality: 0.95 },
-    html2canvas: { scale: 2, useCORS: true, letterRendering: true, logging: false },
+    html2canvas: {
+      scale: 2,
+      useCORS: true,
+      letterRendering: true,
+      logging: false,
+      foreignObjectRendering: false,
+    },
     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-    pagebreak: { mode: ['css', 'legacy'], avoid: ['.msg-block'] },
+    pagebreak: { mode: ['css', 'legacy'], avoid: ['.msg-block', '.msg-content pre', '.msg-content table', '.msg-content blockquote'] },
   };
 
-  const target = container.querySelector('.pdf-wrapper') || container;
-  return html2pdf().set(opt).from(target).outputPdf('blob');
+  try {
+    return await html2pdf().set(opt).from(target).outputPdf('blob');
+  } finally {
+    iframe.remove();
+  }
 }
 
 async function downloadFile(blob, filename) {
@@ -254,7 +301,11 @@ async function init() {
     confirmBtn.disabled = true;
     statusEl.textContent = 'Export baslatiliyor...';
     try {
-      await exportToFormat(payload.format, payload.exportData, payload.appName, exportOptions);
+      let dataToExport = payload.exportData;
+      if (Array.isArray(previewChats) && previewChats.length > 1) {
+        dataToExport = mergeChatsForExport(previewChats, payload.appName);
+      }
+      await exportToFormat(payload.format, dataToExport, payload.appName, exportOptions);
       statusEl.textContent = `${payload.infoText || 'Export tamamlandi.'} Pencereyi simdi kapatabilirsiniz.`;
       await chrome.runtime.sendMessage({ action: 'PREVIEW_CLEAR_PAYLOAD', token });
     } catch (err) {

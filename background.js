@@ -1,11 +1,6 @@
-const SITES = {
-  'chat.openai.com': { name: 'ChatGPT', id: 'chatgpt' },
-  'chatgpt.com': { name: 'ChatGPT', id: 'chatgpt' },
-  'gemini.google.com': { name: 'Gemini', id: 'gemini' },
-  'chat.deepseek.com': { name: 'DeepSeek', id: 'deepseek' },
-  'platform.deepseek.com': { name: 'DeepSeek', id: 'deepseek' },
-  'claude.ai': { name: 'Claude', id: 'claude' },
-};
+import { PlatformManager } from './platforms/platformManager.js';
+
+const SUPPORTED_PATTERNS = PlatformManager.getAllPatterns();
 
 const MENU_ROOT = 'ai_chat_export_root';
 const MENU_TO_FORMAT = {
@@ -16,15 +11,6 @@ const MENU_TO_FORMAT = {
   ai_chat_export_txt: 'txt',
 };
 
-const SUPPORTED_PATTERNS = [
-  'https://chat.openai.com/*',
-  'https://chatgpt.com/*',
-  'https://gemini.google.com/*',
-  'https://chat.deepseek.com/*',
-  'https://platform.deepseek.com/*',
-  'https://*.deepseek.com/*',
-  'https://claude.ai/*',
-];
 
 const PREVIEW_KEY_PREFIX = 'preview_payload_';
 const BUILD_TAG = '2026-02-12-cloud-batch';
@@ -191,20 +177,7 @@ function sanitizeFilenameForDownload(rawName, fallbackExt = 'txt') {
 }
 
 function getSiteByUrl(rawUrl) {
-  if (!rawUrl) return null;
-  let host = '';
-  try {
-    host = new URL(rawUrl).hostname.toLowerCase();
-  } catch {
-    return null;
-  }
-
-  let site = SITES[host];
-  if (!site) {
-    if (host.includes('deepseek')) site = { name: 'DeepSeek', id: 'deepseek' };
-    else site = Object.entries(SITES).find(([h]) => host.endsWith('.' + h))?.[1];
-  }
-  return site || null;
+  return PlatformManager.getPlatform(rawUrl);
 }
 
 function createContextMenus() {
