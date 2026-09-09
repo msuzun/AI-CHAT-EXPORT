@@ -161,6 +161,11 @@ body.theme-dark .msg-block.user {
   margin-bottom: 0.5em;
 }
 
+.msg-content [data-export-whitespace] {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .msg-content img {
   max-width: 100%;
   height: auto;
@@ -172,6 +177,15 @@ body.theme-dark .msg-block.user {
   border-radius: 6px;
   overflow-x: auto;
 }
+
+.msg-content .tok-kw { color: #1d4ed8; font-weight: 600; }
+.msg-content .tok-str { color: #b45309; }
+.msg-content .tok-num { color: #0f766e; }
+.msg-content .tok-com { color: #64748b; font-style: italic; }
+body.theme-dark .msg-content .tok-kw { color: #93c5fd; }
+body.theme-dark .msg-content .tok-str { color: #fcd34d; }
+body.theme-dark .msg-content .tok-num { color: #5eead4; }
+body.theme-dark .msg-content .tok-com { color: #94a3b8; }
 
 .plain-preview {
   white-space: pre-wrap;

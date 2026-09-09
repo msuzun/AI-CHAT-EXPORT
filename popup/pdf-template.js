@@ -13,13 +13,27 @@ function buildPdfHtml(data, appName, options) {
 
   const messages = Array.isArray(data?.messages) ? data.messages : [];
 
-  /** Sadece tehlikeli etiketleri kaldirir; layout dokunmaz. normalizeForPdf bos verdiginde fallback. */
+  /** Normalize ChatGPT markup while preserving semantic content. */
   const lightNormalizeForPdf = (html) => {
     const div = document.createElement('div');
-    div.innerHTML = html || '';
+    div.replaceChildren(DOMPurify.sanitize(html || '', { RETURN_DOM_FRAGMENT: true, FORCE_BODY: true, ADD_TAGS: ['style'] }));
     div.querySelectorAll(
-      ['script', 'style', 'link[rel="stylesheet"]', 'iframe', '[hidden]', '[aria-hidden="true"]'].join(',')
+      ['script', 'style', 'link[rel="stylesheet"]', 'iframe', 'input', 'textarea', 'select', 'option', '[hidden]', '[aria-hidden="true"]'].join(',')
     ).forEach((el) => el.remove());
+    div.querySelectorAll('button,[role="button"]').forEach((el) => {
+      const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      const hasMedia = !!el.querySelector('img,[data-export-attachment],a[href]');
+      if (!hasMedia && !/\.(pdf|docx?|xlsx?|pptx?|csv|txt|zip)\b/i.test(text)) {
+        el.remove();
+        return;
+      }
+      const replacement = document.createElement('span');
+      if (/\.(pdf|docx?|xlsx?|pptx?|csv|txt|zip|rar|7z)\b/i.test(text)) {
+        replacement.setAttribute('data-export-attachment', 'true');
+      }
+      while (el.firstChild) replacement.appendChild(el.firstChild);
+      el.replaceWith(replacement);
+    });
     div.querySelectorAll('*').forEach((el) => {
       const tag = (el.tagName || '').toLowerCase();
       const rawClass = String(el.getAttribute('class') || '');
@@ -29,88 +43,25 @@ function buildPdfHtml(data, appName, options) {
           : '';
       if (keptClasses) el.setAttribute('class', keptClasses);
       else el.removeAttribute('class');
+      if (el.style.whiteSpace.startsWith('pre')) el.setAttribute('data-export-whitespace', 'true');
       el.removeAttribute('style');
-      if (el.getAttribute('aria-hidden') === 'true') el.removeAttribute('aria-hidden');
-    });
-    return div.innerHTML;
-  };
-
-  const normalizeForPdf = (html) => {
-    const div = document.createElement('div');
-    div.innerHTML = html || '';
-    div.querySelectorAll(
-      [
-        'script',
-        'style',
-        'link[rel="stylesheet"]',
-        'iframe',
-        '[hidden]',
-        '[aria-hidden="true"]',
-      ].join(',')
-    ).forEach((el) => el.remove());
-
-    // Chat sayfasindan gelen tam ekran/layout wrapper'lari PDF'te bos sayfa olusturmamasi icin temizle.
-    div.querySelectorAll(
-      [
-        '[class*="min-h-screen"]',
-        '[class*="h-screen"]',
-        '[class*="fixed"]',
-        '[class*="sticky"]',
-        '[class*="absolute"]',
-        '[style*="position: fixed"]',
-        '[style*="position:fixed"]',
-        '[style*="position: absolute"]',
-        '[style*="position:absolute"]',
-      ].join(',')
-    ).forEach((el) => {
-      const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
-      const hasMedia = !!el.querySelector?.('img,picture,video,canvas,math,table,pre,code,ul,ol,li,blockquote,p');
-      if (!text && !hasMedia) {
-        el.remove();
-      } else {
-        el.style.position = 'static';
-        el.style.minHeight = '0';
-        el.style.height = 'auto';
+      if (tag === 'img' || tag === 'video' || tag === 'canvas') {
+        el.removeAttribute('width');
+        el.removeAttribute('height');
       }
-    });
-
-    // Chat UI sinif/stilleri PDF'te metni gorunmez yapabildigi icin semantik sadeleştirme.
-    div.querySelectorAll('*').forEach((el) => {
-      const tag = (el.tagName || '').toLowerCase();
-      const rawClass = String(el.getAttribute('class') || '');
-      const keptClasses =
-        tag === 'code' || tag === 'pre'
-          ? rawClass
-              .split(/\s+/)
-              .filter((c) => /^language-|^lang-|^tok-/.test(c))
-              .join(' ')
-          : '';
-      if (keptClasses) el.setAttribute('class', keptClasses);
-      else el.removeAttribute('class');
-
-      el.removeAttribute('style');
-      el.removeAttribute('hidden');
+      if (tag === 'img') {
+        el.removeAttribute('srcset');
+        el.removeAttribute('sizes');
+        el.removeAttribute('loading');
+      }
       if (el.getAttribute('aria-hidden') === 'true') el.removeAttribute('aria-hidden');
     });
-
     return div.innerHTML;
-  };
-
-  const isRenderable = (msg) => {
-    if (!msg) return false;
-    if (msg.role === 'meta') return !!String(msg.html || '').trim();
-    const div = document.createElement('div');
-    div.innerHTML = msg.html || '';
-    div.querySelectorAll('script,style,svg,[aria-hidden="true"]').forEach((el) => el.remove());
-    const plain = (div.textContent || '').replace(/\s+/g, ' ').trim();
-    const roleOnly = /^(kullanici|asistan|assistant|user|you|chatgpt)$/i.test(plain);
-    if (plain && !roleOnly) return true;
-    return !!div.querySelector('img,picture,video,canvas,math,table,pre,code,ul,ol,li,blockquote');
   };
 
   const hasVisibleContent = (html) => {
     const d = document.createElement('div');
-    d.innerHTML = html || '';
+    d.replaceChildren(DOMPurify.sanitize(html || '', { RETURN_DOM_FRAGMENT: true, FORCE_BODY: true, ADD_TAGS: ['style'] }));
     d.querySelectorAll('script,style').forEach((el) => el.remove());
     return ((d.textContent || '').replace(/\s+/g, ' ').trim().length > 0) || !!d.querySelector('img,picture,video,canvas,math,table,pre,code,ul,ol,li,blockquote');
   };
@@ -164,8 +115,13 @@ function buildPdfHtml(data, appName, options) {
     .join('');
 
   return `<style>
-    .pdf-wrapper .msg-block{break-inside:avoid;page-break-inside:avoid;margin-bottom:1.5em}
-    .pdf-wrapper .msg-content{word-wrap:break-word;overflow-wrap:anywhere;orphans:3;widows:3;color:#1e293b!important;-webkit-text-fill-color:#1e293b!important}
+    .pdf-wrapper{display:block;width:794px!important;max-width:794px!important;box-sizing:border-box!important;overflow:hidden!important}
+    .pdf-wrapper *,
+    .pdf-wrapper *::before,
+    .pdf-wrapper *::after{box-sizing:border-box;max-width:100%}
+    .pdf-wrapper .msg-block{break-inside:auto;page-break-inside:auto;margin-bottom:1.5em}
+    .pdf-wrapper [data-export-whitespace]{white-space:pre-wrap}
+    .pdf-wrapper .msg-content{display:block;width:100%;min-width:0;word-break:break-word;word-wrap:break-word;overflow-wrap:anywhere;orphans:3;widows:3;color:#1e293b!important;-webkit-text-fill-color:#1e293b!important}
     .pdf-wrapper .msg-content *{color:inherit!important;opacity:1!important;visibility:visible!important}
     .pdf-wrapper .msg-content *{max-width:100%}
     .pdf-wrapper .msg-content [style*="position:fixed"],
@@ -179,7 +135,9 @@ function buildPdfHtml(data, appName, options) {
     .pdf-wrapper .msg-content h3,
     .pdf-wrapper .msg-content h4{page-break-after:avoid}
     .pdf-wrapper .msg-content img{max-width:100%;height:auto}
-    .pdf-wrapper .msg-content pre{background:#f1f5f9;padding:1em;border-radius:6px;overflow-x:auto;break-inside:avoid;page-break-inside:avoid}
+    .pdf-wrapper .msg-content [data-export-attachment]{display:inline-block;max-width:100%;margin:.35em 0;padding:.55em .75em;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#334155!important;overflow-wrap:anywhere}
+    .pdf-wrapper .msg-content pre{background:#f1f5f9;padding:1em;border-radius:6px;overflow:hidden;white-space:pre-wrap;word-break:break-word;break-inside:auto;page-break-inside:auto}
+    .pdf-wrapper .msg-content table{display:table;width:100%!important;table-layout:fixed;border-collapse:collapse;overflow-wrap:anywhere}
     .pdf-wrapper .msg-content code{font-family:ui-monospace,monospace;background:#f1f5f9;padding:.2em .4em;border-radius:4px}
     .pdf-wrapper .msg-content pre code{background:none;padding:0}
     .pdf-wrapper .tok-kw{color:#1d4ed8!important;font-weight:600}
@@ -214,4 +172,3 @@ function formatStampDateHuman(iso, labelLanguage) {
     return d.toISOString();
   }
 }
-

@@ -3,22 +3,23 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI Chat Export</title>
+  <title>Chat Export for ChatGPT</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <div class="container">
     <div class="topbar">
-      <span class="brand">AI Chat Export</span>
+      <span class="brand">Chat Export for ChatGPT</span>
       <button id="openSettingsBtn" class="link-btn" title="Ayarlar">Ayarlar</button>
     </div>
+    <p id="independenceNotice" class="hint">Bağımsız uzantı; OpenAI ile bağlantılı değildir ve OpenAI tarafından desteklenmez.</p>
     <div id="detecting" class="state visible">
       <div class="spinner"></div>
       <p>Sayfa tespit ediliyor...</p>
     </div>
     <div id="unsupported" class="state">
       <p class="message">Bu sayfa desteklenmiyor.</p>
-      <p id="unsupportedHint" class="hint">ChatGPT, Gemini, DeepSeek veya Claude chat sayfasinda olmalisiniz.</p>
+      <p id="unsupportedHint" class="hint">Lütfen bir ChatGPT sohbeti açın.</p>
     </div>
     <div id="confirm" class="state">
       <p class="message" id="confirmText"></p>
@@ -96,14 +97,6 @@
           <option value="txt">Plain Text (.txt)</option>
         </select>
 
-        <label id="exportTargetLabel" class="format-label">Kaydetme hedefi:</label>
-        <select id="exportTargetSelect" class="format-select">
-          <option value="local">Yerel (bilgisayar)</option>
-          <option value="notion">Notion</option>
-          <option value="gdrive">Google Drive</option>
-          <option value="onedrive">OneDrive</option>
-        </select>
-
         <button id="exportBtn" class="btn btn-primary">Aktar</button>
       </div>
 
@@ -130,11 +123,12 @@
       <p class="message error"></p>
     </div>
   </div>
-  <div id="pdfContainer" style="position:fixed;top:0;left:0;width:794px;min-height:1122px;background:#fff;color:#000;opacity:0.01;z-index:-1;overflow:visible;"></div>
+  <script src="../lib/dompurify.min.js"></script><script src="../shared/browser-api.js"></script>
+  <script src="../shared/settings.js"></script>
   <script src="pdf-template.js"></script>
   <script src="exporters.js"></script>
-  <script src="cloud-providers.js"></script>
   <script src="../lib/html2pdf.bundle.min.js"></script>
+  <script src="pdf-engine.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

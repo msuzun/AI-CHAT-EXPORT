@@ -1,10 +1,6 @@
 const SITES = {
   'chat.openai.com': { name: 'ChatGPT', id: 'chatgpt' },
   'chatgpt.com': { name: 'ChatGPT', id: 'chatgpt' },
-  'gemini.google.com': { name: 'Gemini', id: 'gemini' },
-  'chat.deepseek.com': { name: 'DeepSeek', id: 'deepseek' },
-  'platform.deepseek.com': { name: 'DeepSeek', id: 'deepseek' },
-  'claude.ai': { name: 'Claude', id: 'claude' },
 };
 
 const FORMATS = {
@@ -15,20 +11,11 @@ const FORMATS = {
   txt: { ext: 'txt', label: 'Plain Text' },
 };
 
-const DEFAULT_SETTINGS = {
-  defaultFormat: 'pdf',
-  defaultClipboardFormat: 'markdown',
-  defaultMessageFilter: 'all',
-  defaultLabelLanguage: 'tr',
-  defaultDateStampMode: 'none',
-  defaultSyntaxHighlight: true,
-  language: 'tr',
-  theme: 'system',
-};
+const DEFAULT_SETTINGS = ExportSettings.defaults;
 
 const I18N = {
   tr: {
-    unsupportedHint: 'ChatGPT, Gemini, DeepSeek veya Claude chat sayfasinda olmalisiniz.',
+    unsupportedHint: 'Lütfen bir ChatGPT sohbeti açın.',
     scopeLabel: 'Kapsam:',
     exportTab: 'Export',
     clipboardTab: 'Panoya Kopyala',
@@ -45,7 +32,7 @@ const I18N = {
     settingsBtn: 'Ayarlar',
   },
   en: {
-    unsupportedHint: 'You should be on a ChatGPT, Gemini, DeepSeek, or Claude chat page.',
+    unsupportedHint: 'Please open a ChatGPT conversation.',
     scopeLabel: 'Scope:',
     exportTab: 'Export',
     clipboardTab: 'Copy to Clipboard',
@@ -86,8 +73,7 @@ function showError(msg) {
 
 async function loadSettings() {
   try {
-    const loaded = await chrome.storage.sync.get(DEFAULT_SETTINGS);
-    currentSettings = { ...DEFAULT_SETTINGS, ...loaded };
+    currentSettings = await ExportSettings.load();
   } catch (_) {
     currentSettings = { ...DEFAULT_SETTINGS };
   }
@@ -127,8 +113,29 @@ function applyLanguage(language, siteName) {
 
   map.forEach(([id, text]) => {
     const el = document.getElementById(id);
-    if (el && typeof text === 'string') el.textContent = text;
+    if (el && typeof text === 'string') {
+      const target = id === 'syntaxHighlightLabel' ? el.querySelector('span') : el;
+      if (target) target.textContent = text;
+    }
   });
+
+  const en = language === 'en';
+  document.getElementById('independenceNotice').textContent = en
+    ? 'Independent extension; not affiliated with or endorsed by OpenAI.'
+    : 'Bağımsız uzantı; OpenAI ile bağlantılı değildir ve OpenAI tarafından desteklenmez.';
+  const optionLabels = {
+    scopeSelect: en ? ['Current conversation','Selected conversations','Loaded conversation links'] : ['Aktif sohbet','Seçili sohbetler','Yüklenmiş sohbet bağlantıları'],
+    messageFilterSelect: en ? ['All messages','User only','Assistant only'] : ['Tüm mesajlar','Yalnızca kullanıcı','Yalnızca asistan'],
+    labelLanguageSelect: ['Türkçe (Kullanıcı/Asistan)','English (User/Assistant)'],
+    dateStampModeSelect: en ? ['None','Filename','Content','Both'] : ['Yok','Dosya adı','İçerik','Her ikisi'],
+  };
+  Object.entries(optionLabels).forEach(([id, labels]) => Array.from(document.getElementById(id)?.options || []).forEach((option, i) => { option.textContent = labels[i]; }));
+  document.getElementById('openSettingsBtn').title = dict.settingsBtn;
+  document.querySelector('#unsupported .message').textContent = en ? 'This page is not supported.' : 'Bu sayfa desteklenmiyor.';
+  document.querySelector('#detecting p').textContent = en ? 'Checking the current tab…' : 'Aktif sekme kontrol ediliyor…';
+  document.querySelector('#exporting .hint').textContent = en ? 'Choose a save location in the download dialog.' : 'İndirme penceresinde kayıt konumunu seçin.';
+  document.getElementById('dateStartInput').setAttribute('aria-label', en ? 'Start date' : 'Başlangıç tarihi');
+  document.getElementById('dateEndInput').setAttribute('aria-label', en ? 'End date' : 'Bitiş tarihi');
 
   if (siteName) {
     const confirmText = document.getElementById('confirmText');
@@ -233,46 +240,14 @@ function isLikelyChatUrl(siteId, rawUrl) {
   try {
     const u = new URL(rawUrl);
     const p = u.pathname || '/';
-    if (siteId === 'chatgpt') return /^\/c\/[^/]+/.test(p);
-    if (siteId === 'gemini') return p.startsWith('/app/');
-    if (siteId === 'deepseek') return p.includes('/chat/') || /^\/c\/[^/]+/.test(p);
-    if (siteId === 'claude') return p.includes('/chat/');
-    return p.includes('/chat/') || p.includes('/c/') || p.includes('/app/');
+    return siteId === 'chatgpt' && !!SITES[u.hostname] && /\/(c|share)\/[^/]+/.test(p);
   } catch (_) {
     return false;
   }
 }
 
 async function generatePdf(data, appName, exportOptions) {
-  const container = document.getElementById('pdfContainer');
-  if (!container) throw new Error('PDF konteyneri bulunamadi.');
-  const html = buildPdfHtml(data, appName, exportOptions);
-  container.innerHTML = html;
-
-  await new Promise((r) => requestAnimationFrame(r));
-  await new Promise((r) => setTimeout(r, 250));
-
-  const wrapper = container.querySelector('.pdf-wrapper');
-  const target = wrapper || container;
-  const clone = target.cloneNode(true);
-  clone.id = '';
-  clone.style.cssText =
-    'position:fixed;left:0;top:0;width:794px;min-height:1122px;background:#fff;color:#1e293b;opacity:1;z-index:2147483647;pointer-events:none;visibility:visible;';
-  document.body.appendChild(clone);
-
-  const opt = {
-    margin: [12, 10, 18, 10],
-    image: { type: 'jpeg', quality: 0.95 },
-    html2canvas: { scale: 2, useCORS: true, letterRendering: true, logging: false },
-    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-    pagebreak: { mode: ['css', 'legacy'], avoid: ['.msg-block', '.msg-content pre', '.msg-content table', '.msg-content blockquote'] },
-  };
-
-  try {
-    return await html2pdf().set(opt).from(clone).outputPdf('blob');
-  } finally {
-    if (clone.parentNode) clone.parentNode.removeChild(clone);
-  }
+  return generateVerifiedPdf(data, appName, exportOptions);
 }
 
 async function downloadFile(blob, filename) {
@@ -299,16 +274,16 @@ async function downloadFile(blob, filename) {
   });
 
   if (filename) {
-    const r1 = await chrome.runtime.sendMessage({ action: 'DOWNLOAD_FILE', dataUrl, filename });
+    const r1 = await Ext.runtime.sendMessage({ action: 'DOWNLOAD_FILE', dataUrl, filename });
     if (r1?.ok) return;
   }
 
   const ext = (filename || '').split('.').pop() || 'txt';
   const fallback = `chat_export_${Date.now()}.${ext}`;
-  const r2 = await chrome.runtime.sendMessage({ action: 'DOWNLOAD_FILE', dataUrl, filename: fallback });
+  const r2 = await Ext.runtime.sendMessage({ action: 'DOWNLOAD_FILE', dataUrl, filename: fallback });
   if (r2?.ok) return;
 
-  const r3 = await chrome.runtime.sendMessage({ action: 'DOWNLOAD_FILE', dataUrl });
+  const r3 = await Ext.runtime.sendMessage({ action: 'DOWNLOAD_FILE', dataUrl });
   if (!r3?.ok) throw new Error(r3?.error || 'Indirme baslatilamadi');
 }
 
@@ -343,12 +318,13 @@ async function exportToFormat(format, data, appName, exportOptions) {
 
 async function ensureContentScript(tabId) {
   try {
-    await chrome.scripting.executeScript({
+    await Ext.scripting.executeScript({
       target: { tabId },
-      files: ['content/content.js'],
+      files: ['shared/browser-api.js', 'lib/dompurify.min.js', 'content/history-loader.js', 'content/content.js'],
     });
   } catch (_) {}
 }
+
 
 function hasRenderableMessageContent(msg) {
   if (!msg || msg.role === 'meta') return false;
@@ -356,7 +332,7 @@ function hasRenderableMessageContent(msg) {
   if (!html.trim()) return false;
 
   const div = document.createElement('div');
-  div.innerHTML = html;
+  div.replaceChildren(DOMPurify.sanitize(html, { RETURN_DOM_FRAGMENT: true, FORCE_BODY: true, ADD_TAGS: ['style'] }));
   const plain = (div.textContent || '').replace(/\s+/g, ' ').trim();
   const roleOnly = /^(kullanici|asistan|assistant|user|you|chatgpt)$/i.test(plain);
   if (plain && !roleOnly) return true;
@@ -379,15 +355,18 @@ async function extractCurrentChat(tabId, siteId, expectedUrl = '') {
   const expected = expectedUrl ? normalizeChatUrlForCompare(expectedUrl) : '';
   for (let i = 0; i < 16; i++) {
     try {
+
       await ensureContentScript(tabId);
-      const response = await chrome.tabs.sendMessage(tabId, {
+
+      const response = await Ext.tabs.sendMessage(tabId, {
         action: 'EXTRACT_CHAT',
         siteId,
       });
+      if (response?.code === 'HISTORY_INCOMPLETE') throw Object.assign(new Error(response.error), { code: response.code });
       const currentFromExtractor = normalizeChatUrlForCompare(response?.data?.currentUrl || '');
       const urlMatched = !expected || (currentFromExtractor && currentFromExtractor === expected);
       const contentReady = !response?.error && response?.data?.messages?.length && hasRenderableChatData(response.data);
-      const userPromptReady = siteId === 'deepseek' || hasUserPrompt(response?.data);
+      const userPromptReady = hasUserPrompt(response?.data);
       if (!urlMatched) {
         lastError = 'Sohbet URL henuz degismedi, tekrar deneniyor.';
       } else if (!contentReady) {
@@ -398,6 +377,7 @@ async function extractCurrentChat(tabId, siteId, expectedUrl = '') {
         return response.data;
       }
     } catch (err) {
+      if (err?.code === 'HISTORY_INCOMPLETE') throw err;
       lastError = err?.message || lastError;
     }
     await new Promise((r) => setTimeout(r, 800));
@@ -406,7 +386,8 @@ async function extractCurrentChat(tabId, siteId, expectedUrl = '') {
 }
 
 async function getChatLinks(tabId, siteId) {
-  const response = await chrome.tabs.sendMessage(tabId, {
+
+  const response = await Ext.tabs.sendMessage(tabId, {
     action: 'EXTRACT_CHAT_LINKS',
     siteId,
   });
@@ -417,7 +398,7 @@ async function getChatLinks(tabId, siteId) {
 async function waitForTabComplete(tabId, timeoutMs = 20000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const t = await chrome.tabs.get(tabId);
+    const t = await Ext.tabs.get(tabId);
     if (t?.status === 'complete') return t;
     await new Promise((r) => setTimeout(r, 250));
   }
@@ -428,7 +409,7 @@ async function waitForTabUrl(tabId, expectedUrl, timeoutMs = 20000) {
   const expected = normalizeChatUrlForCompare(expectedUrl);
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const t = await chrome.tabs.get(tabId);
+    const t = await Ext.tabs.get(tabId);
     const current = normalizeChatUrlForCompare(t?.url || '');
     if (current && current === expected) return t;
     await new Promise((r) => setTimeout(r, 250));
@@ -482,7 +463,7 @@ function filterDataByDateRange(data, rangeStart, rangeEnd) {
   const hasTimestamp = allMessages.some((m) => m.role !== 'meta' && !!parseMessageTimestamp(m));
   if (!hasTimestamp) {
     // Mesajlarda tarih bilgisi yoksa filtreyi atla, export'u engelleme
-    console.warn('[AI Chat Export] Tarih araligi filtresi atlanacak: mesajlarda tarih bilgisi yok.');
+    console.warn('[Chat Export for ChatGPT] Tarih araligi filtresi atlanacak: mesajlarda tarih bilgisi yok.');
     return { ...data, _dateRangeSkipped: true };
   }
 
@@ -497,7 +478,7 @@ function filterDataByDateRange(data, rangeStart, rangeEnd) {
 
   const nonMeta = filtered.filter((m) => m.role !== 'meta').length;
   if (!nonMeta) {
-    console.warn('[AI Chat Export] Secilen tarih araliginda mesaj bulunamadi, tum mesajlar kullanilacak.');
+    console.warn('[Chat Export for ChatGPT] Secilen tarih araliginda mesaj bulunamadi, tum mesajlar kullanilacak.');
     return { ...data, _dateRangeSkipped: true };
   }
 
@@ -524,7 +505,7 @@ async function collectAllChatsFromLinks(tab, siteInfo, exportingTextEl, progress
     try {
       exportingTextEl.textContent = `${progressBaseLabel || 'Dosya'} hazirlaniyor... (${i + 1}/${links.length})`;
 
-      await chrome.tabs.update(tab.id, { url });
+      await Ext.tabs.update(tab.id, { url });
       await waitForTabComplete(tab.id);
       await waitForTabUrl(tab.id, url);
       await new Promise((r) => setTimeout(r, 1200));
@@ -538,7 +519,7 @@ async function collectAllChatsFromLinks(tab, siteInfo, exportingTextEl, progress
 
   if (originalUrl) {
     try {
-      await chrome.tabs.update(tab.id, { url: originalUrl });
+      await Ext.tabs.update(tab.id, { url: originalUrl });
     } catch (_) {}
   }
 
@@ -644,11 +625,11 @@ async function loadBatchList(tabId, siteId) {
   const batchCount = document.getElementById('batchCount');
   if (!batchPanel || !batchList) return;
 
-  batchList.innerHTML = '<p class="batch-loading">Sohbet listesi yukleniyor...</p>';
+  batchList.replaceChildren(DOMPurify.sanitize('<p class="batch-loading">Sohbet listesi yukleniyor...</p>', { RETURN_DOM_FRAGMENT: true, FORCE_BODY: true, ADD_TAGS: ['style'] }));
 
   try {
     await ensureContentScript(tabId);
-    const response = await chrome.tabs.sendMessage(tabId, {
+    const response = await Ext.tabs.sendMessage(tabId, {
       action: 'GET_CONVERSATION_LIST',
       siteId,
     });
@@ -659,10 +640,12 @@ async function loadBatchList(tabId, siteId) {
 
   if (!batchConversationItems.length) {
     try {
-      const tab = await chrome.tabs.get(tabId);
+      const tab = await Ext.tabs.get(tabId);
       let links = await getChatLinks(tabId, siteId);
       if (tab?.url) links = uniqueUrls([tab.url, ...links]);
       links = links.filter((u) => isLikelyChatUrl(siteId, u));
+
+
 
       batchConversationItems = links.map((href, idx) => {
         let title = `Sohbet ${idx + 1}`;
@@ -673,23 +656,24 @@ async function loadBatchList(tabId, siteId) {
         } catch (_) {}
         return { title, href };
       });
-    } catch (_) {
+    } catch (e) {
+      if (typeof console !== 'undefined' && console.warn) console.warn('[Chat Export for ChatGPT BATCH] loadBatchList getChatLinks error', e);
       batchConversationItems = [];
     }
   }
 
   if (!batchConversationItems.length) {
-    batchList.innerHTML = '<p class="batch-loading">Sohbet bulunamadi.</p>';
+    batchList.replaceChildren(DOMPurify.sanitize('<p class="batch-loading">Sohbet bulunamadi.</p>', { RETURN_DOM_FRAGMENT: true, FORCE_BODY: true, ADD_TAGS: ['style'] }));
     if (batchCount) batchCount.textContent = '0 secili';
     return;
   }
 
-  batchList.innerHTML = '';
+  batchList.replaceChildren(DOMPurify.sanitize('', { RETURN_DOM_FRAGMENT: true, FORCE_BODY: true, ADD_TAGS: ['style'] }));
   batchConversationItems.forEach((item, idx) => {
     const row = document.createElement('label');
     row.className = 'batch-item';
-    row.innerHTML = `<input type="checkbox" data-batch-idx="${idx}" checked>
-      <span class="batch-item-title">${escapeHtml(item.title || `Sohbet ${idx + 1}`)}</span>`;
+    row.replaceChildren(DOMPurify.sanitize(`<input type="checkbox" data-batch-idx="${idx}" checked>
+      <span class="batch-item-title">${escapeHtml(item.title || `Sohbet ${idx + 1}`)}</span>`, { RETURN_DOM_FRAGMENT: true }));
     batchList.appendChild(row);
   });
 
@@ -749,7 +733,7 @@ async function collectSelectedChats(tab, siteInfo, selectedIndices, progressEl, 
       }
 
       if (item.href) {
-        await chrome.tabs.update(tab.id, { url: item.href });
+        await Ext.tabs.update(tab.id, { url: item.href });
         await waitForTabComplete(tab.id);
         await waitForTabUrl(tab.id, item.href);
         await new Promise((r) => setTimeout(r, 1200));
@@ -760,7 +744,7 @@ async function collectSelectedChats(tab, siteInfo, selectedIndices, progressEl, 
         const prevFp = chats.length > 0
           ? (chats[chats.length - 1].messages || []).map((m) => (m.html || '').slice(0, 80)).join('|')
           : '';
-        const response = await chrome.tabs.sendMessage(tab.id, {
+        const response = await Ext.tabs.sendMessage(tab.id, {
           action: 'EXTRACT_CHAT_AT_INDEX',
           siteId: siteInfo.id,
           index: idx,
@@ -780,115 +764,8 @@ async function collectSelectedChats(tab, siteInfo, selectedIndices, progressEl, 
 }
 
 /* ================================================================
-   CLOUD EXPORT TARGET
+   POPUP INITIALIZATION
    ================================================================ */
-
-async function updateCloudTargetOptions() {
-  const targetSelect = document.getElementById('exportTargetSelect');
-  if (!targetSelect) return;
-
-  try {
-    const status = await chrome.runtime.sendMessage({ action: 'CLOUD_GET_STATUS' });
-    if (!status?.ok) return;
-
-    for (const opt of targetSelect.options) {
-      if (opt.value === 'notion') {
-        opt.disabled = !status.notion.connected;
-        opt.textContent = status.notion.connected
-          ? `Notion (${status.notion.label || 'Bagli'})`
-          : 'Notion (Baglanmadi)';
-      }
-      if (opt.value === 'gdrive') {
-        opt.disabled = !status.gdrive.connected;
-        opt.textContent = status.gdrive.connected
-          ? 'Google Drive (Bagli)'
-          : 'Google Drive (Baglanmadi)';
-      }
-      if (opt.value === 'onedrive') {
-        opt.disabled = !status.onedrive.connected;
-        opt.textContent = status.onedrive.connected
-          ? `OneDrive (${status.onedrive.label || 'Bagli'})`
-          : 'OneDrive (Baglanmadi)';
-      }
-    }
-  } catch (_) {}
-}
-
-async function exportToCloudTarget(target, format, data, appName, exportOptions) {
-  if (target === 'local') return null;
-
-  const tokenRes = await chrome.runtime.sendMessage({ action: 'CLOUD_GET_TOKEN', provider: target });
-  if (!tokenRes?.ok) throw new Error(tokenRes?.error || `${target} token alinamadi.`);
-  const token = tokenRes.token;
-
-  if (target === 'notion') {
-    const parentData = await chrome.storage.local.get('notionParentPageId');
-    const parentId = parentData.notionParentPageId || '';
-    const result = await notionCreatePage(
-      token,
-      parentId,
-      data.title || `${appName} Export`,
-      data.messages || [],
-      exportOptions
-    );
-    return { provider: 'Notion', url: result.url || '' };
-  }
-
-  const baseName = buildExportBaseName(data.title, exportOptions);
-  const ext = FORMATS[format]?.ext || 'txt';
-  const filename = `${baseName}.${ext}`;
-  let blob;
-
-  switch (format) {
-    case 'pdf':
-      blob = await generatePdf(data, appName, exportOptions);
-      break;
-    case 'markdown':
-      blob = exportMarkdown(data, appName, exportOptions);
-      break;
-    case 'word':
-      blob = exportWord(data, appName, exportOptions);
-      break;
-    case 'html':
-      blob = exportHtml(data, appName, exportOptions);
-      break;
-    case 'txt':
-      blob = exportPlainText(data, appName, exportOptions);
-      break;
-    default:
-      throw new Error('Desteklenmeyen format.');
-  }
-
-  if (target === 'gdrive') {
-    const result = await googleDriveUpload(token, filename, blob, blob.type);
-    return { provider: 'Google Drive', url: `https://drive.google.com/file/d/${result.id}/view` };
-  }
-
-  if (target === 'onedrive') {
-    await oneDriveUpload(token, filename, blob);
-    return { provider: 'OneDrive', url: '' };
-  }
-
-  throw new Error('Bilinmeyen hedef: ' + target);
-}
-
-async function openExportPreview(payload) {
-  const response = await chrome.runtime.sendMessage({
-    action: 'PREVIEW_SET_PAYLOAD',
-    payload,
-  });
-  if (!response?.ok || !response?.token) {
-    throw new Error(response?.error || 'Export onizleme acilamadi.');
-  }
-
-  await chrome.windows.create({
-    url: chrome.runtime.getURL(`popup/preview.html?token=${encodeURIComponent(response.token)}`),
-    type: 'popup',
-    width: 1200,
-    height: 860,
-    focused: true,
-  });
-}
 
 async function init() {
   try {
@@ -900,11 +777,32 @@ async function init() {
     const settingsBtn = document.getElementById('openSettingsBtn');
     if (settingsBtn) {
       settingsBtn.onclick = () => {
-        chrome.runtime.openOptionsPage();
+        Ext.runtime.openOptionsPage();
       };
     }
 
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const { exportInProgress } = await Ext.storage.local.get('exportInProgress');
+    if (exportInProgress) {
+      showState('exporting');
+      const exportingTextEl = document.getElementById('exportingText');
+      if (exportingTextEl) exportingTextEl.textContent = 'Şu an arka planda çalışıyor...';
+      const exportingHint = states.exporting?.querySelector('.hint');
+      if (exportingHint) exportingHint.textContent = 'Tamamlandığında önizleme penceresi açılacak.';
+      Ext.storage.onChanged.addListener(function onExportDone(changes, areaName) {
+        if (areaName !== 'local' || !changes.exportInProgress) return;
+        if (changes.exportInProgress.oldValue === true && !changes.exportInProgress.newValue) {
+          Ext.storage.onChanged.removeListener(onExportDone);
+          if (states.success) {
+            states.success.querySelector('.message').textContent = 'Export tamamlandı. Önizleme penceresi açıldı.';
+            showState('success');
+          }
+          setTimeout(init, 2000);
+        }
+      });
+      return;
+    }
+
+    const [tab] = await Ext.tabs.query({ active: true, currentWindow: true });
     if (!tab?.url) {
       showState('unsupported');
       return;
@@ -919,12 +817,8 @@ async function init() {
     }
 
     let site = SITES[host];
-    if (!site) {
-      if (host.includes('deepseek')) site = { name: 'DeepSeek', id: 'deepseek' };
-      else site = Object.entries(SITES).find(([h]) => host.endsWith('.' + h))?.[1];
-    }
-    const siteInfo = site || null;
 
+    const siteInfo = site || null;
     if (!siteInfo) {
       showState('unsupported');
       return;
@@ -987,73 +881,51 @@ async function init() {
       });
     }
 
-    // Cloud target status
-    updateCloudTargetOptions();
 
     showState('confirm');
 
     exportBtn.onclick = async () => {
       const format = formatSelect.value;
       const scope = document.getElementById('scopeSelect').value;
-      const target = document.getElementById('exportTargetSelect')?.value || 'local';
+      const target = 'local';
       const exportingText = document.getElementById('exportingText');
-      exportingText.textContent = `${FORMATS[format]?.label || format} olusturuluyor...`;
+      const exportOptions = getCurrentExportOptions();
 
-      showState('exporting');
-      try {
-        const resolved = await resolveDataByScope(
-          tab,
-          siteInfo,
-          scope,
-          exportingText,
-          `${FORMATS[format]?.label || format} olusturuluyor...`,
-          FORMATS[format]?.label || format
-        );
-
-        const exportOptions = getCurrentExportOptions();
-        const rangeStart = exportOptions.dateRangeStart;
-        const rangeEnd = exportOptions.dateRangeEnd;
-        const filteredPreviewChats = (resolved.previewChats || []).map((chat) =>
-          filterDataByDateRange(chat, rangeStart, rangeEnd)
-        );
-
-        const dateRangeSkipped = filteredPreviewChats.some((c) => c._dateRangeSkipped);
-        let infoText = resolved.infoText;
-        if (dateRangeSkipped && (rangeStart || rangeEnd)) {
-          infoText += ' (Tarih araligi filtresi: mesajlarda tarih bilgisi bulunamadigi icin atlanildi.)';
-        }
-
-        const filteredExportData =
-          (scope === 'all' || scope === 'selected')
-            ? mergeChatsForExport(filteredPreviewChats, siteInfo.name)
-            : filteredPreviewChats[0];
-
-        // Cloud export: dogrudan gonder
-        if (target !== 'local') {
-          exportingText.textContent = `${target} icin yukleniyor...`;
-          const cloudResult = await exportToCloudTarget(target, format, filteredExportData, siteInfo.name, exportOptions);
-          if (states.success) {
-            const urlInfo = cloudResult?.url ? ` URL: ${cloudResult.url}` : '';
-            states.success.querySelector('.message').textContent = `${cloudResult?.provider || target} icin export tamamlandi.${urlInfo}`;
-            showState('success');
+      if (target === 'local') {
+        showState('exporting');
+        exportingText.textContent = 'Export arka planda baslatiliyor...';
+        try {
+          let selectedBatchItems = [];
+          if (scope === 'selected') {
+            const indices = getSelectedBatchIndices();
+            selectedBatchItems = indices.map((idx) => batchConversationItems[idx]).filter(Boolean);
           }
-          return;
+          const response = await Ext.runtime.sendMessage({
+            action: 'RUN_FULL_EXPORT',
+            tabId: tab.id,
+            siteInfo,
+            format,
+            scope,
+            exportOptions,
+            selectedBatchItems,
+            target,
+          });
+          if (response?.ok) {
+            if (states.success) {
+              states.success.querySelector('.message').textContent = 'Export arka planda baslatildi. Onizleme penceresi acilacak.';
+              showState('success');
+            }
+            setTimeout(() => window.close(), 1500);
+          } else {
+            showError(response?.error || 'Export baslatilamadi.');
+          }
+        } catch (err) {
+          showError(err?.message || 'Bir hata olustu. Sayfayi yenileyip tekrar deneyin.');
         }
-
-        // Local export: preview ac
-        await openExportPreview({
-          format,
-          appName: siteInfo.name,
-          scope,
-          exportData: filteredExportData,
-          previewChats: filteredPreviewChats,
-          infoText,
-          exportOptions,
-        });
-        window.close();
-      } catch (err) {
-        showError(err?.message || 'Bir hata olustu. Sayfayi yenileyip tekrar deneyin.');
+        return;
       }
+
+
     };
 
     copyBtn.onclick = async () => {

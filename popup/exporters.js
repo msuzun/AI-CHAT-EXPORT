@@ -67,7 +67,7 @@ function detectCodeLanguage(codeEl) {
 }
 
 function highlightCodeText(rawCode, lang) {
-  let text = escapeHtml(rawCode || '');
+  const text = String(rawCode || '');
   if (!text) return '';
 
   const keywordMap = {
@@ -83,33 +83,36 @@ function highlightCodeText(rawCode, lang) {
   };
   const keywords = keywordMap[lang] || keywordMap.javascript;
 
-  text = text.replace(/(\"[^\"\n]*\"|'[^'\n]*'|`[^`\n]*`)/g, '<span class="tok-str">$1</span>');
-  text = text.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="tok-num">$1</span>');
-
-  if (lang === 'python' || lang === 'py' || lang === 'bash' || lang === 'sh') {
-    text = text.replace(/(^|\s)(#.*)$/gm, '$1<span class="tok-com">$2</span>');
-  } else {
-    text = text.replace(/(\/\/.*)$/gm, '<span class="tok-com">$1</span>');
+  // Tokenize source once: later replacements must never reprocess generated HTML.
+  const hashComments = ['python', 'py', 'bash', 'sh'].includes(lang);
+  const tokens = hashComments
+    ? /"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|`(?:\\[\s\S]|[^`\\])*`|#[^\r\n]*|\b\d+(?:\.\d+)?\b|\b[A-Za-z_$][\w$]*\b/g
+    : /"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|`(?:\\[\s\S]|[^`\\])*`|\/\/[^\r\n]*|\/\*[\s\S]*?\*\/|\b\d+(?:\.\d+)?\b|\b[A-Za-z_$][\w$]*\b/g;
+  let result = '';
+  let end = 0;
+  for (const match of text.matchAll(tokens)) {
+    const token = match[0];
+    result += escapeHtml(text.slice(end, match.index));
+    const type = /^["'`]/.test(token) ? 'str'
+      : (hashComments ? token.startsWith('#') : /^\/[/\*]/.test(token)) ? 'com'
+      : /^\d/.test(token) ? 'num' : keywords.includes(token) ? 'kw' : '';
+    const escaped = escapeHtml(token);
+    result += type ? `<span class="tok-${type}">${escaped}</span>` : escaped;
+    end = match.index + token.length;
   }
-
-  if (keywords.length) {
-    const kwRegex = new RegExp(`\\b(${keywords.join('|')})\\b`, 'g');
-    text = text.replace(kwRegex, '<span class="tok-kw">$1</span>');
-  }
-
-  return text;
+  return result + escapeHtml(text.slice(end));
 }
 
 function applySyntaxHighlightToHtml(html, enabled) {
   if (!enabled) return html || '';
   const div = document.createElement('div');
-  div.innerHTML = html || '';
+  div.replaceChildren(DOMPurify.sanitize(html || '', { RETURN_DOM_FRAGMENT: true, FORCE_BODY: true, ADD_TAGS: ['style'] }));
   const blocks = div.querySelectorAll('pre code, code[class*="language-"], code[class*="lang-"]');
   blocks.forEach((codeEl) => {
     const lang = detectCodeLanguage(codeEl);
     const highlighted = highlightCodeText(codeEl.textContent || '', lang);
     if (highlighted) {
-      codeEl.innerHTML = highlighted;
+      codeEl.replaceChildren(DOMPurify.sanitize(highlighted, { RETURN_DOM_FRAGMENT: true, FORCE_BODY: true, ADD_TAGS: ['style'] }));
       codeEl.classList.add('syntax-ready');
     }
   });
@@ -118,13 +121,13 @@ function applySyntaxHighlightToHtml(html, enabled) {
 
 function htmlToText(html) {
   const div = document.createElement('div');
-  div.innerHTML = html || '';
+  div.replaceChildren(DOMPurify.sanitize(html || '', { RETURN_DOM_FRAGMENT: true, FORCE_BODY: true, ADD_TAGS: ['style'] }));
   return div.textContent || div.innerText || '';
 }
 
 function htmlToMarkdown(html) {
   const div = document.createElement('div');
-  div.innerHTML = html || '';
+  div.replaceChildren(DOMPurify.sanitize(html || '', { RETURN_DOM_FRAGMENT: true, FORCE_BODY: true, ADD_TAGS: ['style'] }));
   let md = '';
   const walk = (node) => {
     if (node.nodeType === Node.TEXT_NODE) return node.textContent;
@@ -192,7 +195,7 @@ function buildMarkdownText(data, appName, options) {
 function buildMarkdownTextFromBlocks(blocks, title) {
   let md = `# ${title}\n\n`;
   const div = document.createElement('div');
-  div.innerHTML = blocks;
+  div.replaceChildren(DOMPurify.sanitize(blocks, { RETURN_DOM_FRAGMENT: true, FORCE_BODY: true, ADD_TAGS: ['style'] }));
   const blocksEl = div.querySelectorAll('.msg-block');
   blocksEl.forEach((b) => {
     const label = b.querySelector('.msg-label')?.textContent || '';
@@ -216,6 +219,7 @@ function exportHtml(data, appName, options) {
     .msg-block.user{background:#f0f4ff;border-color:#bfdbfe}
     .msg-block.meta{background:#fff;border-color:#cbd5e1}
     .msg-label{font-size:0.75em;font-weight:600;color:#64748b;margin-bottom:0.5em}
+    [data-export-whitespace]{white-space:pre-wrap;overflow-wrap:anywhere}
     .msg-content img{max-width:100%;height:auto}
     .msg-content pre{background:#f1f5f9;padding:1em;border-radius:6px;overflow-x:auto}
     .msg-content code{background:#f1f5f9;padding:.2em .4em;border-radius:4px}
@@ -247,7 +251,7 @@ function buildPlainText(data, appName, options) {
 function buildPlainTextFromBlocks(blocks, title) {
   let txt = title + '\n\n' + '='.repeat(title.length) + '\n\n';
   const div = document.createElement('div');
-  div.innerHTML = blocks;
+  div.replaceChildren(DOMPurify.sanitize(blocks, { RETURN_DOM_FRAGMENT: true, FORCE_BODY: true, ADD_TAGS: ['style'] }));
   const blocksEl = div.querySelectorAll('.msg-block');
   blocksEl.forEach((b) => {
     const label = b.querySelector('.msg-label')?.textContent || '';
@@ -271,6 +275,7 @@ function exportWord(data, appName, options) {
     body{font-family:Calibri,Arial,sans-serif;font-size:11pt;line-height:1.5}
     .msg-block{margin:1em 0;padding:1em}
     .msg-label{font-size:9pt;font-weight:bold;color:#555;margin-bottom:0.5em}
+    [data-export-whitespace]{white-space:pre-wrap;overflow-wrap:anywhere}
     .msg-content img{max-width:100%}
     .tok-kw{color:#1d4ed8;font-weight:600}
     .tok-str{color:#b45309}

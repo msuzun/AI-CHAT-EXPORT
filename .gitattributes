@@ -1,0 +1,2 @@
+# Generated, minified third-party bundles contain significant whitespace in strings.
+lib/*.min.js -diff

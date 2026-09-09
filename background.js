@@ -1,3 +1,5 @@
+import './shared/browser-api.js';
+import './shared/settings.js';
 import { PlatformManager } from './platforms/platformManager.js';
 
 const SUPPORTED_PATTERNS = PlatformManager.getAllPatterns();
@@ -13,141 +15,7 @@ const MENU_TO_FORMAT = {
 
 
 const PREVIEW_KEY_PREFIX = 'preview_payload_';
-const BUILD_TAG = '2026-02-12-cloud-batch';
-console.info('[AI Chat Export] background loaded:', BUILD_TAG);
 
-/* ================================================================
-   OAUTH HANDLERS
-   ================================================================ */
-
-const ONEDRIVE_CLIENT_ID = '';
-
-function getRedirectUrl() {
-  return `https://${chrome.runtime.id}.chromiumapp.org/`;
-}
-
-async function notionConnect(secret) {
-  if (!secret) throw new Error('Notion Integration Secret girilmedi.');
-
-  // Secret'i dogrula: basit bir API cagrisi yap
-  const res = await fetch('https://api.notion.com/v1/users/me', {
-    headers: {
-      Authorization: `Bearer ${secret}`,
-      'Notion-Version': '2022-06-28',
-    },
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || `Notion secret gecersiz (HTTP ${res.status}). Dogru secret girdiginizden emin olun.`);
-  }
-
-  const user = await res.json();
-  const name = user.name || user.bot?.owner?.user?.name || 'Notion';
-
-  await chrome.storage.local.set({
-    notionToken: secret,
-    notionWorkspaceName: name,
-  });
-
-  return { ok: true, workspaceName: name };
-}
-
-async function googleDriveOAuthConnect() {
-  const token = await chrome.identity.getAuthToken({ interactive: true });
-  if (!token?.token) throw new Error('Google Drive yetkilendirmesi basarisiz.');
-  await chrome.storage.local.set({ gdriveConnected: true });
-  return { ok: true };
-}
-
-async function googleDriveGetToken() {
-  const token = await chrome.identity.getAuthToken({ interactive: false });
-  if (!token?.token) throw new Error('Google Drive token alinamadi. Yeniden baglanti gerekebilir.');
-  return token.token;
-}
-
-async function oneDriveOAuthConnect() {
-  const clientId = (await chrome.storage.local.get('onedriveClientId')).onedriveClientId || ONEDRIVE_CLIENT_ID;
-  if (!clientId) throw new Error('OneDrive Client ID ayarlanmamis. Ayarlar sayfasindan girin.');
-
-  const redirectUri = getRedirectUrl();
-  const scope = 'Files.ReadWrite User.Read offline_access';
-  const authUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${encodeURIComponent(clientId)}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&response_mode=query`;
-
-  const resultUrl = await chrome.identity.launchWebAuthFlow({ url: authUrl, interactive: true });
-  const code = new URL(resultUrl).searchParams.get('code');
-  if (!code) throw new Error('OneDrive yetkilendirme kodu alinamadi.');
-
-  const tokenRes = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: clientId,
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: redirectUri,
-      scope,
-    }),
-  });
-
-  if (!tokenRes.ok) throw new Error('OneDrive token alinamadi.');
-  const td = await tokenRes.json();
-
-  let userName = '';
-  try {
-    const me = await fetch('https://graph.microsoft.com/v1.0/me', {
-      headers: { Authorization: `Bearer ${td.access_token}` },
-    });
-    if (me.ok) {
-      const u = await me.json();
-      userName = u.displayName || u.mail || '';
-    }
-  } catch (_) {}
-
-  await chrome.storage.local.set({
-    onedriveToken: td.access_token,
-    onedriveRefreshToken: td.refresh_token || '',
-    onedriveExpiry: Date.now() + (td.expires_in || 3600) * 1000,
-    onedriveUserName: userName,
-  });
-
-  return { ok: true, userName };
-}
-
-async function oneDriveRefreshToken() {
-  const data = await chrome.storage.local.get(['onedriveRefreshToken', 'onedriveClientId']);
-  const clientId = data.onedriveClientId || ONEDRIVE_CLIENT_ID;
-  const refreshToken = data.onedriveRefreshToken;
-  if (!refreshToken || !clientId) throw new Error('OneDrive yeniden baglanti gerekli.');
-
-  const tokenRes = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: clientId,
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      scope: 'Files.ReadWrite User.Read offline_access',
-    }),
-  });
-
-  if (!tokenRes.ok) throw new Error('OneDrive token yenilenemedi. Yeniden baglanti gerekli.');
-  const td = await tokenRes.json();
-
-  await chrome.storage.local.set({
-    onedriveToken: td.access_token,
-    onedriveRefreshToken: td.refresh_token || refreshToken,
-    onedriveExpiry: Date.now() + (td.expires_in || 3600) * 1000,
-  });
-
-  return td.access_token;
-}
-
-async function oneDriveGetToken() {
-  const data = await chrome.storage.local.get(['onedriveToken', 'onedriveExpiry']);
-  if (data.onedriveToken && data.onedriveExpiry > Date.now() + 60000) return data.onedriveToken;
-  return oneDriveRefreshToken();
-}
 
 function sanitizeFilenameForDownload(rawName, fallbackExt = 'txt') {
   const value = String(rawName || '').trim();
@@ -180,69 +48,63 @@ function getSiteByUrl(rawUrl) {
   return PlatformManager.getPlatform(rawUrl);
 }
 
+let menuUpdate = Promise.resolve();
 function createContextMenus() {
-  chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
+  // Serialize installation, startup and rapid setting changes to avoid duplicate IDs.
+  menuUpdate = menuUpdate.catch(() => {}).then(rebuildContextMenus);
+  return menuUpdate;
+}
+
+async function rebuildContextMenus() {
+  const { language } = await ExportSettings.load();
+  const titles = language === 'en'
+    ? ['Export to PDF', 'Export to Markdown', 'Export to Word', 'Export to HTML', 'Export to plain text']
+    : ["PDF'e aktar", "Markdown'a aktar", "Word'e aktar", "HTML'e aktar", 'Düz metne aktar'];
+  const create = (details) => new Promise((resolve, reject) => {
+    Ext.contextMenus.create(details, () => {
+      const error = Ext.runtime.lastError;
+      if (error) reject(new Error(error.message));
+      else resolve();
+    });
+  });
+  await Ext.contextMenus.removeAll();
+  await create({
       id: MENU_ROOT,
-      title: 'AI Chat Export',
+      title: 'Chat Export for ChatGPT',
       contexts: ['page'],
       documentUrlPatterns: SUPPORTED_PATTERNS,
     });
 
-    chrome.contextMenus.create({
-      id: 'ai_chat_export_pdf',
+  for (const [index, id] of Object.keys(MENU_TO_FORMAT).entries()) {
+    await create({
+      id,
       parentId: MENU_ROOT,
-      title: "PDF'e aktar",
+      title: titles[index],
       contexts: ['page'],
       documentUrlPatterns: SUPPORTED_PATTERNS,
     });
-    chrome.contextMenus.create({
-      id: 'ai_chat_export_markdown',
-      parentId: MENU_ROOT,
-      title: "Markdown'a aktar",
-      contexts: ['page'],
-      documentUrlPatterns: SUPPORTED_PATTERNS,
-    });
-    chrome.contextMenus.create({
-      id: 'ai_chat_export_word',
-      parentId: MENU_ROOT,
-      title: "Word'e aktar",
-      contexts: ['page'],
-      documentUrlPatterns: SUPPORTED_PATTERNS,
-    });
-    chrome.contextMenus.create({
-      id: 'ai_chat_export_html',
-      parentId: MENU_ROOT,
-      title: "HTML'e aktar",
-      contexts: ['page'],
-      documentUrlPatterns: SUPPORTED_PATTERNS,
-    });
-    chrome.contextMenus.create({
-      id: 'ai_chat_export_txt',
-      parentId: MENU_ROOT,
-      title: "Text'e aktar",
-      contexts: ['page'],
-      documentUrlPatterns: SUPPORTED_PATTERNS,
-    });
-  });
+  }
 }
 
 async function ensureContentScript(tabId) {
   try {
-    await chrome.scripting.executeScript({
+    await Ext.scripting.executeScript({
       target: { tabId },
-      files: ['content/content.js'],
+      files: ['shared/browser-api.js', 'lib/dompurify.min.js', 'content/history-loader.js', 'content/content.js'],
     });
   } catch (_) {}
 }
 
+
 async function extractChat(tabId, siteId) {
+
   await ensureContentScript(tabId);
-  const response = await chrome.tabs.sendMessage(tabId, {
+
+  const response = await Ext.tabs.sendMessage(tabId, {
     action: 'EXTRACT_CHAT',
     siteId,
   });
-  if (response?.error) throw new Error(response.error);
+  if (response?.error) throw Object.assign(new Error(response.error), { code: response.code });
   if (!response?.data?.messages?.length) throw new Error('Bu sayfada chat icerigi bulunamadi.');
   return response.data;
 }
@@ -250,63 +112,252 @@ async function extractChat(tabId, siteId) {
 async function waitForTabComplete(tabId, timeoutMs = 15000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const t = await chrome.tabs.get(tabId);
+    const t = await Ext.tabs.get(tabId);
     if (t?.status === 'complete') return;
     await new Promise((r) => setTimeout(r, 250));
   }
   throw new Error('Export sayfasi zamaninda yuklenemedi.');
 }
 
-async function runExportInRunner(format, data, appName) {
-  const runnerTab = await chrome.tabs.create({
-    url: chrome.runtime.getURL('popup/context-export.html'),
-    active: false,
-  });
-
-  const defaultOptions = await chrome.storage.sync.get({
-    defaultMessageFilter: 'all',
-    defaultLabelLanguage: 'tr',
-    defaultDateStampMode: 'none',
-    defaultSyntaxHighlight: true,
-  });
-  const exportOptions = {
-    messageFilter: defaultOptions.defaultMessageFilter,
-    labelLanguage: defaultOptions.defaultLabelLanguage,
-    dateStampMode: defaultOptions.defaultDateStampMode,
-    syntaxHighlight: defaultOptions.defaultSyntaxHighlight !== false,
-    exportedAt: new Date().toISOString(),
-  };
-
+function normalizeChatUrlForCompare(rawUrl) {
   try {
-    await waitForTabComplete(runnerTab.id);
-    const sanitizedAppName = appName.replace(/[/\\?%*:|"<>\s]/g, '-');
-    const response = await chrome.tabs.sendMessage(runnerTab.id, {
-      action: 'RUN_CONTEXT_EXPORT',
-      format,
-      data,
-      appName:sanitizedAppName,
-      exportOptions,
-    });
-
-    if (!response?.ok) {
-      throw new Error(response?.error || 'Sag tik export basarisiz oldu.');
-    }
-  } finally {
-    try {
-      await chrome.tabs.remove(runnerTab.id);
-    } catch (_) {}
+    const u = new URL(rawUrl);
+    u.hash = '';
+    u.search = '';
+    return u.href;
+  } catch (_) {
+    return String(rawUrl || '').trim();
   }
 }
 
-chrome.runtime.onInstalled.addListener(() => {
-  createContextMenus();
+async function waitForTabUrl(tabId, expectedUrl, timeoutMs = 20000) {
+  const expected = normalizeChatUrlForCompare(expectedUrl);
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const t = await Ext.tabs.get(tabId);
+    const current = normalizeChatUrlForCompare(t?.url || '');
+    if (current && current === expected) return t;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error('Hedef sohbet URL yuklenemedi.');
+}
+
+function uniqueUrls(urls) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of urls || []) {
+    try {
+      const normalized = new URL(raw).href;
+      if (!seen.has(normalized)) {
+        seen.add(normalized);
+        out.push(normalized);
+      }
+    } catch (_) {}
+  }
+  return out;
+}
+
+function isLikelyChatUrl(siteId, rawUrl) {
+  return PlatformManager.isLikelyChatUrl(siteId, rawUrl);
+}
+
+async function getChatLinks(tabId, siteId) {
+
+  const response = await Ext.tabs.sendMessage(tabId, { action: 'EXTRACT_CHAT_LINKS', siteId });
+  if (response?.error) throw new Error(response.error);
+  return response?.links || [];
+}
+
+async function extractCurrentChat(tabId, siteId, expectedUrl = '') {
+  let lastError = 'Bu sayfada chat icerigi bulunamadi.';
+  const expected = expectedUrl ? normalizeChatUrlForCompare(expectedUrl) : '';
+  for (let i = 0; i < 16; i++) {
+    try {
+      const data = await extractChat(tabId, siteId);
+      const currentUrl = data?.currentUrl || '';
+      const urlMatched = !expected || (currentUrl && normalizeChatUrlForCompare(currentUrl) === expected);
+      const hasMessages = data?.messages?.length > 0;
+      if (urlMatched && hasMessages) return data;
+      if (!hasMessages) lastError = 'Sohbet icerigi henuz yuklenmedi, tekrar deneniyor.';
+    } catch (err) {
+      if (err?.code === 'HISTORY_INCOMPLETE') throw err;
+      lastError = err?.message || lastError;
+    }
+    await new Promise((r) => setTimeout(r, 800));
+  }
+  throw new Error(lastError);
+}
+
+function escapeHtml(text) {
+  const s = String(text ?? '');
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function mergeChatsForExport(chats, appName) {
+  const mergedMessages = [];
+  chats.forEach((chat, idx) => {
+    const title = chat?.title || `Sohbet ${idx + 1}`;
+    const sourceUrl = chat?.sourceUrl || '';
+    const heading = [
+      `<h2 style="margin:0 0 6px 0;">${idx + 1}. ${escapeHtml(title)}</h2>`,
+      sourceUrl ? `<p style="margin:0;color:#64748b;font-size:12px;">${escapeHtml(sourceUrl)}</p>` : '',
+    ].join('');
+    mergedMessages.push({ role: 'meta', html: heading });
+    mergedMessages.push(...(chat.messages || []));
+  });
+  return { title: `${appName} Tum Sohbetler (${chats.length})`, messages: mergedMessages };
+}
+
+function parseDateBoundary(value, isEnd) {
+  if (!value) return null;
+  const d = new Date(value + (isEnd ? 'T23:59:59.999' : 'T00:00:00.000'));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function parseMessageTimestamp(msg) {
+  if (!msg?.timestamp) return null;
+  const d = new Date(msg.timestamp);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function filterDataByDateRange(data, rangeStart, rangeEnd) {
+  if (!rangeStart && !rangeEnd) return { ...data };
+  const start = parseDateBoundary(rangeStart, false);
+  const end = parseDateBoundary(rangeEnd, true);
+  if (!start && !end) return { ...data };
+  const allMessages = Array.isArray(data?.messages) ? data.messages : [];
+  const hasTimestamp = allMessages.some((m) => m.role !== 'meta' && !!parseMessageTimestamp(m));
+  if (!hasTimestamp) return { ...data, _dateRangeSkipped: true };
+  const filtered = allMessages.filter((m) => {
+    if (m.role === 'meta') return true;
+    const ts = parseMessageTimestamp(m);
+    if (!ts) return true;
+    if (start && ts < start) return false;
+    if (end && ts > end) return false;
+    return true;
+  });
+  const nonMeta = filtered.filter((m) => m.role !== 'meta').length;
+  if (!nonMeta) throw new Error('Seçilen tarih aralığında mesaj bulunamadı.');
+  return { ...data, messages: filtered };
+}
+
+async function collectAllChatsFromLinks(tabId, siteInfo, originalUrl) {
+  await ensureContentScript(tabId);
+  let links = await getChatLinks(tabId, siteInfo.id);
+  if (originalUrl) links = uniqueUrls([originalUrl, ...links]);
+  links = links.filter((u) => isLikelyChatUrl(siteInfo.id, u));
+  if (!links.length) throw new Error('Gecerli sohbet linki bulunamadi. Once sohbet gecmis listesini acin.');
+
+  const chats = [];
+  const failed = [];
+  for (let i = 0; i < links.length; i++) {
+    const url = links[i];
+    try {
+      await Ext.tabs.update(tabId, { url });
+      await waitForTabComplete(tabId);
+      await waitForTabUrl(tabId, url);
+      await new Promise((r) => setTimeout(r, 1200));
+      const data = await extractCurrentChat(tabId, siteInfo.id, url);
+      chats.push({ ...data, sourceUrl: url });
+    } catch (err) {
+      failed.push({ url, reason: err?.message || 'Bilinmeyen hata' });
+    }
+  }
+  if (originalUrl) {
+    try {
+      await Ext.tabs.update(tabId, { url: originalUrl });
+    } catch (_) {}
+  }
+  return { chats, failed, total: links.length };
+}
+
+async function collectSelectedChatsFromItems(tabId, siteInfo, selectedBatchItems) {
+  const chats = [];
+  const failed = [];
+  for (let i = 0; i < selectedBatchItems.length; i++) {
+    const item = selectedBatchItems[i];
+    if (!item?.href) continue;
+    try {
+      await Ext.tabs.update(tabId, { url: item.href });
+      await waitForTabComplete(tabId);
+      await waitForTabUrl(tabId, item.href);
+      await new Promise((r) => setTimeout(r, 1200));
+      const data = await extractCurrentChat(tabId, siteInfo.id, item.href);
+      chats.push({ ...data, sourceUrl: item.href });
+    } catch (err) {
+      failed.push({ title: item.title, reason: err?.message || 'Hata' });
+    }
+  }
+  return { chats, failed, total: selectedBatchItems.length };
+}
+
+async function resolveDataByScopeInBackground(tabId, siteInfo, scope, exportOptions, selectedBatchItems) {
+  await ensureContentScript(tabId);
+
+  if (scope === 'all') {
+    const tab = await Ext.tabs.get(tabId);
+    const result = await collectAllChatsFromLinks(tabId, siteInfo, tab?.url);
+    if (!result.chats.length) {
+      const detail = result.failed[0]?.reason ? ` Ilk hata: ${result.failed[0].reason}` : '';
+      throw new Error(`Hicbir sohbet islenemedi.${detail}`);
+    }
+    const data = mergeChatsForExport(result.chats, siteInfo.name);
+    const infoText = result.failed.length > 0 ? `${result.chats.length}/${result.total} sohbet islendi.` : 'Islem basariyla tamamlandi.';
+    return { data, infoText, previewChats: result.chats };
+  }
+
+  if (scope === 'selected') {
+    if (!selectedBatchItems?.length) throw new Error('Hicbir sohbet secilmedi.');
+    const result = await collectSelectedChatsFromItems(tabId, siteInfo, selectedBatchItems);
+    if (!result.chats.length) {
+      const detail = result.failed[0]?.reason ? ` Ilk hata: ${result.failed[0].reason}` : '';
+      throw new Error(`Hicbir sohbet islenemedi.${detail}`);
+    }
+    const data = mergeChatsForExport(result.chats, siteInfo.name);
+    const infoText = result.failed.length > 0 ? `${result.chats.length}/${result.total} sohbet islendi.` : 'Islem basariyla tamamlandi.';
+    return { data, infoText, previewChats: result.chats };
+  }
+
+  const data = await extractCurrentChat(tabId, siteInfo.id);
+  return { data, infoText: 'Islem basariyla tamamlandi.', previewChats: [data] };
+}
+
+async function openExportPreviewFromBackground(payload) {
+  const token = `${Date.now()}_${crypto.randomUUID()}`;
+  await Ext.storage.local.set({ [PREVIEW_KEY_PREFIX + token]: payload || null });
+  const previewWindow = await Ext.windows.create({
+    url: Ext.runtime.getURL(`popup/preview.html?token=${encodeURIComponent(token)}`),
+    type: 'popup',
+    width: 1200,
+    height: 860,
+  });
+  await Ext.storage.local.set({ [PREVIEW_KEY_PREFIX + token]: { ...payload, _previewTabId: previewWindow.tabs?.[0]?.id, _savedAt: Date.now() } });
+}
+
+async function runExportInRunner(format, data, appName) {
+  const settings = await ExportSettings.load();
+  await openExportPreviewFromBackground({ format, appName, scope: 'current', exportData: data, previewChats: [data],
+    infoText: '', exportOptions: { messageFilter: settings.defaultMessageFilter, labelLanguage: settings.defaultLabelLanguage,
+    dateStampMode: settings.defaultDateStampMode, syntaxHighlight: settings.defaultSyntaxHighlight, exportedAt: new Date().toISOString() } });
+}
+
+Ext.runtime.onInstalled.addListener(() => {
+  clearLegacyData().catch(console.error);
+  createContextMenus().catch(console.error);
 });
 
-chrome.runtime.onStartup.addListener(() => {
-  createContextMenus();
+Ext.runtime.onStartup.addListener(() => {
+  clearLegacyData().catch(console.error);
+  createContextMenus().catch(console.error);
 });
 
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+Ext.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'sync' && changes.language) {
+    createContextMenus().catch(console.error);
+  }
+});
+
+Ext.contextMenus.onClicked.addListener(async (info, tab) => {
   const format = MENU_TO_FORMAT[info.menuItemId];
   if (!format) return;
   if (!tab?.id || !tab?.url) return;
@@ -322,11 +373,52 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+async function fetchMediaDataUrl(rawUrl) {
+  const url = new URL(rawUrl);
+  const allowed =
+    url.protocol === 'https:' &&
+    (url.hostname === 'chatgpt.com' ||
+      url.hostname === 'openai.com' ||
+      url.hostname.endsWith('.openai.com') ||
+      url.hostname === 'oaiusercontent.com' ||
+      url.hostname.endsWith('.oaiusercontent.com') ||
+      url.hostname === 'oaistatic.com' ||
+      url.hostname.endsWith('.oaistatic.com'));
+  if (!allowed) throw new Error('Medya adresine erisim izni yok.');
+
+  const response = await fetch(url.href, { credentials: 'include' });
+  if (!response.ok) throw new Error(`Medya indirilemedi (HTTP ${response.status}).`);
+  const blob = await response.blob();
+  if (!blob.type.startsWith('image/')) throw new Error('Medya bir gorsel degil.');
+  if (blob.size > 15 * 1024 * 1024) throw new Error('Gorsel 15 MB sinirini asiyor.');
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return `data:${blob.type};base64,${btoa(binary)}`;
+}
+
+Ext.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (sender.id !== Ext.runtime.id) return;
+  const fromPage = sender.url && !sender.url.startsWith(Ext.runtime.getURL(''));
+  if (fromPage && (!getSiteByUrl(sender.url) || !['HISTORY_PROGRESS', 'FETCH_MEDIA_DATA_URL'].includes(msg.action))) return;
+
+  if (msg.action === 'HISTORY_PROGRESS') {
+    sendResponse({ ok: true });
+    return;
+  }
+  if (msg.action === 'FETCH_MEDIA_DATA_URL') {
+    fetchMediaDataUrl(msg.url)
+      .then((dataUrl) => sendResponse({ ok: true, dataUrl }))
+      .catch((err) => sendResponse({ ok: false, error: err?.message || 'Medya alinamadi.' }));
+    return true;
+  }
+
   if (msg.action === 'PREVIEW_SET_PAYLOAD') {
-    const token = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    chrome.storage.local
-      .set({ [PREVIEW_KEY_PREFIX + token]: msg.payload || null })
+    const token = `${Date.now()}_${crypto.randomUUID()}`;
+    Ext.storage.local
+      .set({ [PREVIEW_KEY_PREFIX + token]: { ...msg.payload, _savedAt: Date.now() } })
       .then(() => sendResponse({ ok: true, token }))
       .catch((err) => sendResponse({ ok: false, error: err?.message || 'Preview payload saklanamadi.' }));
     return true;
@@ -334,11 +426,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === 'PREVIEW_GET_PAYLOAD') {
     const key = PREVIEW_KEY_PREFIX + msg.token;
-    chrome.storage.local
+    Ext.storage.local
       .get(key)
       .then((obj) => {
         const payload = obj?.[key];
-        if (!payload) {
+        if (!payload || Date.now() - (payload._savedAt || Number(String(msg.token).split('_')[0])) > 3600000) {
+          Ext.storage.local.remove(key).catch(() => {});
           sendResponse({ ok: false, error: 'Preview verisi bulunamadi.' });
           return;
         }
@@ -349,119 +442,83 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === 'PREVIEW_CLEAR_PAYLOAD') {
-    chrome.storage.local
+    Ext.storage.local
       .remove(PREVIEW_KEY_PREFIX + msg.token)
       .then(() => sendResponse({ ok: true }))
       .catch((err) => sendResponse({ ok: false, error: err?.message || 'Preview verisi silinemedi.' }));
     return true;
   }
 
-  if (msg.action === 'CLOUD_CONNECT') {
+  if (msg.action === 'RUN_FULL_EXPORT') {
     (async () => {
-      try {
-        let result;
-        if (msg.provider === 'notion') result = await notionConnect(msg.secret);
-        else if (msg.provider === 'gdrive') result = await googleDriveOAuthConnect();
-        else if (msg.provider === 'onedrive') result = await oneDriveOAuthConnect();
-        else throw new Error('Bilinmeyen provider: ' + msg.provider);
-        sendResponse({ ok: true, ...result });
-      } catch (err) {
-        sendResponse({ ok: false, error: err?.message || 'Baglanti basarisiz.' });
+      const { tabId, siteInfo, format, scope, exportOptions, selectedBatchItems, target } = msg;
+      if (!tabId || !siteInfo?.id) {
+        sendResponse({ ok: false, error: 'Eksik parametre.' });
+        return;
       }
-    })();
-    return true;
-  }
-
-  if (msg.action === 'CLOUD_DISCONNECT') {
-    (async () => {
+      await Ext.storage.local.set({ exportInProgress: true });
       try {
-        if (msg.provider === 'notion') {
-          await chrome.storage.local.remove(['notionToken', 'notionWorkspaceName', 'notionParentPageId']);
-        } else if (msg.provider === 'gdrive') {
-          await chrome.storage.local.remove(['gdriveConnected']);
-          try { await chrome.identity.clearAllCachedAuthTokens(); } catch (_) {}
-        } else if (msg.provider === 'onedrive') {
-          await chrome.storage.local.remove(['onedriveToken', 'onedriveRefreshToken', 'onedriveExpiry', 'onedriveUserName']);
+        const resolved = await resolveDataByScopeInBackground(
+          tabId,
+          siteInfo,
+          scope,
+          exportOptions || {},
+          selectedBatchItems || []
+        );
+        const rangeStart = exportOptions?.dateRangeStart;
+        const rangeEnd = exportOptions?.dateRangeEnd;
+        const filteredPreviewChats = (resolved.previewChats || []).map((chat) =>
+          filterDataByDateRange(chat, rangeStart, rangeEnd)
+        );
+        const dateRangeSkipped = filteredPreviewChats.some((c) => c._dateRangeSkipped);
+        let infoText = resolved.infoText || 'Islem basariyla tamamlandi.';
+        if (dateRangeSkipped && (rangeStart || rangeEnd)) {
+          infoText += ' (Tarih araligi filtresi: mesajlarda tarih bilgisi bulunamadigi icin atlanildi.)';
         }
+        const filteredExportData =
+          scope === 'all' || scope === 'selected'
+            ? mergeChatsForExport(filteredPreviewChats, siteInfo.name)
+            : filteredPreviewChats[0];
+
+
+        await openExportPreviewFromBackground({
+          format,
+          appName: siteInfo.name,
+          scope,
+          exportData: filteredExportData,
+          previewChats: filteredPreviewChats,
+          infoText,
+          exportOptions: exportOptions || {},
+        });
         sendResponse({ ok: true });
       } catch (err) {
-        sendResponse({ ok: false, error: err?.message || 'Baglanti kesilemedi.' });
-      }
-    })();
-    return true;
-  }
-
-  if (msg.action === 'CLOUD_GET_STATUS') {
-    (async () => {
-      try {
-        const data = await chrome.storage.local.get({
-          notionToken: '', notionWorkspaceName: '',
-          gdriveConnected: false,
-          onedriveToken: '', onedriveExpiry: 0, onedriveUserName: '',
-        });
-        sendResponse({
-          ok: true,
-          notion: { connected: !!data.notionToken, label: data.notionWorkspaceName || '' },
-          gdrive: { connected: !!data.gdriveConnected, label: 'Google Drive' },
-          onedrive: { connected: !!data.onedriveToken && data.onedriveExpiry > Date.now(), label: data.onedriveUserName || '' },
-        });
-      } catch (err) {
-        sendResponse({ ok: false, error: err?.message });
-      }
-    })();
-    return true;
-  }
-
-  if (msg.action === 'CLOUD_GET_TOKEN') {
-    (async () => {
-      try {
-        let token;
-        if (msg.provider === 'gdrive') token = await googleDriveGetToken();
-        else if (msg.provider === 'onedrive') token = await oneDriveGetToken();
-        else if (msg.provider === 'notion') {
-          const d = await chrome.storage.local.get('notionToken');
-          token = d.notionToken;
-          if (!token) throw new Error('Notion bagli degil.');
-        }
-        sendResponse({ ok: true, token });
-      } catch (err) {
-        sendResponse({ ok: false, error: err?.message || 'Token alinamadi.' });
+        console.error('[Chat Export for ChatGPT] RUN_FULL_EXPORT error:', err);
+        sendResponse({ ok: false, error: err?.message || 'Export basarisiz.' });
+      } finally {
+        await Ext.storage.local.set({ exportInProgress: false });
       }
     })();
     return true;
   }
 
   if (msg.action === 'DOWNLOAD_FILE' || msg.action === 'DOWNLOAD_PDF') {
-    (async () => {
-      const requestedName = msg.filename
-        ? sanitizeFilenameForDownload(msg.filename, 'txt')
-        : null;
-
-      // 1. deneme: sanitize edilmiş dosya adıyla
-      if (requestedName) {
-        try {
-          await chrome.downloads.download({ url: msg.dataUrl, filename: requestedName, saveAs: true });
-          sendResponse({ ok: true });
-          return;
-        } catch (_) {}
-      }
-
-      // 2. deneme: basit fallback adıyla
-      const ext = requestedName ? requestedName.split('.').pop() : 'txt';
-      try {
-        await chrome.downloads.download({ url: msg.dataUrl, filename: `chat_export_${Date.now()}.${ext}`, saveAs: true });
-        sendResponse({ ok: true });
-        return;
-      } catch (_) {}
-
-      // 3. deneme: dosya adı olmadan
-      try {
-        await chrome.downloads.download({ url: msg.dataUrl, saveAs: true });
-        sendResponse({ ok: true });
-      } catch (finalErr) {
-        sendResponse({ ok: false, error: finalErr?.message || 'Download basarisiz.' });
-      }
-    })();
+    if (!/^data:(application\/(pdf|msword|octet-stream)|text\/(plain|html|markdown))[;,]/i.test(msg.dataUrl || '')) {
+      sendResponse({ ok: false, error: 'Geçersiz indirme içeriği.' }); return;
+    }
+    Ext.downloads.download({ url: msg.dataUrl, filename: sanitizeFilenameForDownload(msg.filename), saveAs: true })
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || 'İndirme iptal edildi.' }));
     return true;
   }
+});
+
+async function clearLegacyData() {
+  const stored = await Ext.storage.local.get(null);
+  const keys = Object.keys(stored).filter((key) => key.startsWith(PREVIEW_KEY_PREFIX) || /^(notion|gdrive|onedrive)/.test(key) || key === 'exportInProgress');
+  if (keys.length) await Ext.storage.local.remove(keys);
+}
+Ext.tabs.onRemoved.addListener(async (tabId) => {
+  const stored = await Ext.storage.local.get(null);
+  const keys = Object.keys(stored).filter((key) => key.startsWith(PREVIEW_KEY_PREFIX) && (stored[key]?._previewTabId === tabId || Date.now() - (stored[key]?._savedAt || 0) > 3600000));
+  if (keys.length) await Ext.storage.local.remove(keys);
 });
